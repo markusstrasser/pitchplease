@@ -76,10 +76,10 @@ const CHORDS = [
 ];
 
 function matchChord(pitchClasses) {
-  if (!pitchClasses || pitchClasses.length < 2) return null;
+  if (!pitchClasses || pitchClasses.length < 3) return null;
 
   const pcs = [...new Set(pitchClasses)].sort((a, b) => a - b);
-  if (pcs.length < 2) return null;
+  if (pcs.length < 3) return null;
 
   let best = null, bestScore = 0.5;
 
