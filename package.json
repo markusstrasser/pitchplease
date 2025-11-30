@@ -1,5 +1,5 @@
 {
-  "name": "pitchplease",
+  "name": "@markusstrasser/pitchplease",
   "version": "2.0.0",
   "description": "Polyphonic pitch detection in the browser. No dependencies.",
   "main": "pitchplease.js",
@@ -26,7 +26,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/your-username/pitchplease.git"
+    "url": "git+https://github.com/markusstrasser/pitchplease.git"
   },
-  "homepage": "https://github.com/your-username/pitchplease#readme"
+  "homepage": "https://github.com/markusstrasser/pitchplease#readme",
+  "publishConfig": {
+    "access": "public"
+  }
 }
