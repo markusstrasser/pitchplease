@@ -13,6 +13,11 @@ describe('matchChord', () => {
     expect(matchChord([9, 8])).toBeNull(); // A, G# - was falsely matching maj7
   });
 
+  test('returns null for 3 notes that do not form a known chord', () => {
+    expect(matchChord([0, 1, 2])).toBeNull(); // C, C#, D - chromatic cluster
+    expect(matchChord([0, 1, 6])).toBeNull(); // C, C#, F# - no standard chord
+  });
+
   test('returns null for empty/invalid input', () => {
     expect(matchChord([])).toBeNull();
     expect(matchChord(null)).toBeNull();
