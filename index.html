@@ -297,25 +297,30 @@
           ctx.fillRect(0, h - 4, w, 4);
         }
 
-        // Update chord display (with hold) or show single note
+        // Update chord display or show single note
         if (d.chord && d.stable) {
+          // Real chord detected
           lastChord = d.chord;
           chordHoldFrames = 20;
-        }
-
-        if (chordHoldFrames > 0) {
+          rootEl.textContent = lastChord.root;
+          extEl.textContent = lastChord.abbrev;
+          chordEl.style.background = pcColor(lastChord.rootPc, 80, 40, 0.9);
+        } else if (d.fundCount >= 1 && d.stable) {
+          // Single note (or notes that don't form a chord) - show dominant note
+          chordHoldFrames = 0; // Clear hold buffer
+          lastChord = null;
+          const pc = Math.round(d.fundMidis[0]) % 12;
+          rootEl.textContent = midiToNote(d.fundMidis[0], false);
+          extEl.textContent = '';
+          chordEl.style.background = pcColor(pc, 80, 40, 0.9);
+        } else if (chordHoldFrames > 0) {
+          // Hold previous chord briefly
           chordHoldFrames--;
           if (lastChord) {
             rootEl.textContent = lastChord.root;
             extEl.textContent = lastChord.abbrev;
             chordEl.style.background = pcColor(lastChord.rootPc, 80, 40, 0.9);
           }
-        } else if (d.fundCount === 1 && d.stable) {
-          // Single note detected - show it instead of stale chord
-          const pc = Math.round(d.fundMidis[0]) % 12;
-          rootEl.textContent = midiToNote(d.fundMidis[0], false);
-          extEl.textContent = '';
-          chordEl.style.background = pcColor(pc, 80, 40, 0.9);
         } else {
           rootEl.textContent = '-';
           extEl.textContent = '';
