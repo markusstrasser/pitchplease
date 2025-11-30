@@ -2,67 +2,170 @@
 
 Polyphonic pitch detection in the browser. No dependencies, no build step.
 
-## Features
+## Install
 
-- Real-time polyphonic pitch detection via Web Audio API
-- Chord recognition (24 chord types including 7ths, 6ths, extensions)
-- Colorful spectrum visualization
-- Adjustable MIDI range
-- ~300 lines of vanilla JS
+Just copy `pitchplease.js` to your project. That's it.
 
 ## Usage
+
+### Plain HTML
 
 ```html
 <script src="pitchplease.js"></script>
 <script>
-  const p = PitchPlease.create({
-    onUpdate: (data) => { /* spectrum, detected notes, chord */ },
-    onChord: (chord) => console.log(chord.full), // "Cmaj7"
-    onError: (e) => console.error(e)
+  const detector = PitchPlease.create({
+    onUpdate: (data) => console.log(data.pitchClasses),
+    onChord: (chord) => console.log(chord.full),  // "Cmaj7"
   });
 
-  button.onclick = () => p.start();
+  // Must be called from user gesture (click/tap)
+  button.onclick = () => detector.start();
 </script>
 ```
 
-## Dev
+### Svelte
 
-```bash
-bun dev-testing.js
-# open http://localhost:3000
+```svelte
+<script>
+  import { onMount } from 'svelte';
+
+  let chord = '';
+  let detector;
+
+  onMount(() => {
+    // Load the script
+    const script = document.createElement('script');
+    script.src = '/pitchplease.js';
+    script.onload = () => {
+      detector = PitchPlease.create({
+        onChord: (c) => chord = c.full,
+      });
+    };
+    document.head.appendChild(script);
+  });
+
+  function start() {
+    detector?.start();
+  }
+</script>
+
+<button on:click={start}>Start</button>
+<p>{chord}</p>
+```
+
+### React
+
+```jsx
+import { useEffect, useRef, useState } from 'react';
+
+export function PitchDetector() {
+  const [chord, setChord] = useState('');
+  const detector = useRef(null);
+
+  useEffect(() => {
+    const script = document.createElement('script');
+    script.src = '/pitchplease.js';
+    script.onload = () => {
+      detector.current = window.PitchPlease.create({
+        onChord: (c) => setChord(c.full),
+      });
+    };
+    document.head.appendChild(script);
+  }, []);
+
+  return (
+    <>
+      <button onClick={() => detector.current?.start()}>Start</button>
+      <p>{chord}</p>
+    </>
+  );
+}
+```
+
+### Node/CommonJS (for testing only - no audio in Node)
+
+```javascript
+const PitchPlease = require('./pitchplease.js');
+const chord = PitchPlease.matchChord([0, 4, 7]); // { full: 'C' }
 ```
 
 ## API
 
 ### `PitchPlease.create(options)`
 
-Returns `{ start, stop, togglePause, paused }`.
+Creates a detector instance. Returns `{ start, stop, togglePause, paused }`.
 
-**Options:**
-- `onUpdate(data)` - called each frame with detection data
-- `onChord(chord)` - called when a stable chord is detected
-- `onError(error)` - called on errors
-- `fftSize` - FFT size (default: 16384)
-- `stabilityFrames` - frames before chord is considered stable (default: 4)
+```javascript
+const detector = PitchPlease.create({
+  onUpdate: (data) => {},    // called every frame (~60fps)
+  onChord: (chord) => {},    // called when stable chord detected
+  onError: (err) => {},      // called on errors
+  fftSize: 16384,            // FFT resolution (default: 16384)
+  stabilityFrames: 4,        // frames before chord is stable (default: 4)
+});
 
-### Detection Data
+await detector.start();      // request mic, start detection
+detector.stop();             // stop and release mic
+detector.togglePause();      // pause/resume
+detector.paused;             // boolean
+```
+
+### `onUpdate` data
 
 ```javascript
 {
-  spectrum,      // Float32Array - FFT magnitudes
-  binMidi,       // Float32Array - MIDI note for each bin
+  spectrum,      // Float32Array - raw FFT magnitudes
+  binMidi,       // Float32Array - MIDI note for each FFT bin
   fundMidis,     // Float32Array - detected fundamental pitches
-  fundCount,     // number of detected pitches
-  pitchClasses,  // array of pitch classes [0-11]
-  stable,        // boolean - detection is stable
-  chord,         // { root, abbrev, full } or null
-  maxEnergy,     // max FFT magnitude this frame
+  fundCount,     // number - how many pitches detected
+  pitchClasses,  // number[] - unique pitch classes [0-11]
+  stable,        // boolean - has detection stabilized?
+  chord,         // object | null - detected chord
+  maxEnergy,     // number - loudest FFT bin this frame
 }
 ```
 
-### Chord Types
+### `chord` object
 
-Triads: Major, Minor, Dim, Aug, Sus4, Sus2, 5
-Sevenths: Maj7, 7, m7, m(maj7), dim7, ø7, aug7
-Sixths: 6, m6
-Extensions: add9, madd9, 9, m9, maj9, 11, 13
+```javascript
+{
+  root: 'C',        // note name
+  rootPc: 0,        // pitch class (0-11)
+  name: 'Major',    // full chord name
+  abbrev: '',       // suffix (m, maj7, dim, etc)
+  full: 'C',        // root + abbrev ("Cmaj7", "F#m", etc)
+}
+```
+
+### Utilities
+
+```javascript
+PitchPlease.midiToNote(60)           // 'C'
+PitchPlease.midiToNote(60, true)     // 'C4'
+PitchPlease.matchChord([0, 4, 7])    // { full: 'C', ... }
+PitchPlease.pitchClassToColor(0)     // 'hsla(60,80%,50%,1)'
+PitchPlease.NOTE_NAMES               // ['C','C#','D',...]
+```
+
+## Chord Types
+
+**Triads:** Major, Minor, Dim, Aug, Sus4, Sus2, 5
+**Sevenths:** Maj7, 7, m7, m(maj7), dim7, ø7, aug7
+**Sixths:** 6, m6
+**Extensions:** add9, madd9, 9, m9, maj9, 11, 13
+
+## Dev
+
+```bash
+bun dev-testing.js
+# http://localhost:3000
+```
+
+## How it works
+
+1. FFT via Web Audio `AnalyserNode` (16384 bins)
+2. Adaptive noise floor estimation
+3. Peak detection with parabolic interpolation
+4. Harmonic sieve groups peaks into fundamentals
+5. Pitch class extraction and stability check
+6. Template matching against chord intervals

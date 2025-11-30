@@ -291,13 +291,16 @@ function createPolyphon(opts = {}) {
   return { start, stop, togglePause, get paused() { return paused; } };
 }
 
-// Export
-window.PitchPlease = {
+// Export (supports both global and ES modules)
+const PitchPlease = {
   create: createPolyphon,
   matchChord,
   midiToNote,
   pitchClassToColor,
   NOTE_NAMES,
 };
+
+if (typeof window !== 'undefined') window.PitchPlease = PitchPlease;
+if (typeof module !== 'undefined') module.exports = PitchPlease;
 
 })();
