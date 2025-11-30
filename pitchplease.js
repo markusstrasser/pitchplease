@@ -81,8 +81,7 @@ function matchChord(pitchClasses) {
   const pcs = [...new Set(pitchClasses)].sort((a, b) => a - b);
   if (pcs.length < 3) return null;
 
-  let best = null, bestScore = 0.5;
-
+  // Try each pitch class as potential root (like original algorithm)
   for (let i = 0; i < pcs.length; i++) {
     const root = pcs[i];
     const intervals = pcs.filter((_, j) => j !== i)
@@ -90,18 +89,17 @@ function matchChord(pitchClasses) {
       .filter(x => x > 0)
       .sort((a, b) => a - b);
 
+    // Require EXACT match like original: all template intervals must match, no extras
     for (const [name, abbrev, template] of CHORDS) {
-      let matches = template.filter(t => intervals.includes(t)).length;
-      let score = matches / template.length - (intervals.length - matches) * 0.1;
-
-      if (score > bestScore) {
-        bestScore = score;
-        best = { root: NOTE_NAMES[root], rootPc: root, name, abbrev, full: NOTE_NAMES[root] + abbrev };
+      const sortedTemplate = [...template].sort((a, b) => a - b);
+      if (intervals.length === sortedTemplate.length &&
+          intervals.every((v, idx) => v === sortedTemplate[idx])) {
+        return { root: NOTE_NAMES[root], rootPc: root, name, abbrev, full: NOTE_NAMES[root] + abbrev };
       }
     }
   }
 
-  return best;
+  return null;
 }
 
 // ============ MAIN ============
