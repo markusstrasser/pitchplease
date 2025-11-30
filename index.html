@@ -1,489 +1,340 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <title>Polyphonic FTW</title>
-    <link href="./rangeSlider/nouislider.min.css" rel="stylesheet">
-</head>
-<style>
-
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PitchPlease</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-        margin:0;
-        background: #060606;
-        font-family: Helvetica;
-        font-size: 10px;
-        height: 100vh;
-        display:-webkit-box;
-        display:-ms-flexbox;
-        display:flex;
-        -webkit-box-orient: vertical;
-        -webkit-box-direction: normal;
-        -ms-flex-direction: column;
-        flex-direction: column;
-        -ms-flex-wrap: nowrap;
-        flex-wrap: nowrap;
-        -webkit-box-flex: 0;
-        -ms-flex: 0;
-        flex: 1;
+      font-family: Helvetica, system-ui, sans-serif;
+      background: oklch(10% 0 0);
+      color: white;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
     }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 2rem;
+      padding: 0.8rem;
+      background: oklch(15% 0 0);
+    }
+
+    .chord-display {
+      display: flex;
+      align-items: baseline;
+      padding: 0.4rem 1.2rem;
+      border-radius: 6px;
+      border: 1px solid oklch(30% 0 0);
+      min-width: 100px;
+      justify-content: center;
+    }
+    .chord-root {
+      font-size: 2.2rem;
+      font-weight: bold;
+    }
+    .chord-ext {
+      font-size: 1.4rem;
+      font-weight: normal;
+      opacity: 0.9;
+    }
+
+    button {
+      border: 0;
+      outline: 0;
+      padding: 0.6rem 1.5rem;
+      font-size: 0.9rem;
+      border-radius: 4px;
+      cursor: pointer;
+      background: oklch(90% 0.2 105);
+      color: oklch(20% 0 0);
+      font-weight: 500;
+    }
+    button:hover { background: oklch(93% 0.2 105); }
 
     #container {
-        -webkit-box-flex:1;
-        -ms-flex-positive:1;
-        flex-grow:1;
-        z-index: 3;
-        max-height:93vh;
+      flex: 1;
+      position: relative;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
     }
 
-    section {
-        display: -webkit-box;
-        display: -ms-flexbox;
-        display: flex;
-        -ms-flex-item-align: center;
-        align-self: center;
+    .overlay {
+      position: absolute;
+      inset: 0;
+      background: oklch(5% 0 0 / 95%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .overlay.hidden { display: none; }
+    .overlay button {
+      padding: 1.2rem 2.5rem;
+      font-size: 1.5rem;
+      border-radius: 8px;
     }
 
-    section > * {
-        color: white;
-        font-size: 28px;
-        -ms-flex-item-align: center;
-        align-self: center;
-        /*padding: 0.5em;*/
-        padding-left: 5vw;
-        padding-right: 5vw;
-        margin: 0.3rem;
+    /* Dual range slider */
+    .range-wrap {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
     }
-
-    #pauser {
-        -ms-flex-item-align: center;
-        border:0;
-        outline:0;
-        line-height: 3;
-        padding-left: 2rem;
-        padding-right: 2rem;
-        align-self: center;
-
-        font-size: 1rem;
-        z-index: 5;
-        background: #feff00;
-        color: rgba(50,50,50,1);
+    .range-label {
+      font-size: 0.85rem;
+      min-width: 2.5rem;
+      text-align: center;
+      opacity: 0.8;
     }
-
-    .chordDisplay {
-        font-size: 2.5em;
-        display:-webkit-box;
-        display:-ms-flexbox;
-        display:flex;
-        color:white;
-        font-family: sans-serif;
-        font-weight: bold;
-        border: 1px solid rgba(250, 251, 246, 0.14);
+    .dual-range {
+      position: relative;
+      width: 180px;
+      height: 24px;
     }
-    #marg {
-        padding: 1em;
+    .dual-range input[type="range"] {
+      position: absolute;
+      width: 100%;
+      height: 6px;
+      top: 9px;
+      pointer-events: none;
+      -webkit-appearance: none;
+      appearance: none;
+      background: transparent;
     }
-    #myHeightBtn {
-        color:black;
-        font-weight: 400;
-        font-size: 0.8rem;
-        /*padding: 0.5rem;*/
-        padding-left: 0rem;
-        padding-right:0rem;
-        /*width: 1rem;*/
-        align-self: center;
+    .dual-range input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      height: 18px;
+      width: 18px;
+      border-radius: 50%;
+      background: oklch(90% 0.2 105);
+      cursor: pointer;
+      pointer-events: auto;
+      border: 2px solid oklch(20% 0 0);
     }
-
-
-</style>
+    .dual-range input[type="range"]::-moz-range-thumb {
+      height: 18px;
+      width: 18px;
+      border-radius: 50%;
+      background: oklch(90% 0.2 105);
+      cursor: pointer;
+      pointer-events: auto;
+      border: 2px solid oklch(20% 0 0);
+    }
+    .dual-range .track {
+      position: absolute;
+      height: 6px;
+      top: 9px;
+      left: 0;
+      right: 0;
+      background: oklch(30% 0 0);
+      border-radius: 3px;
+    }
+    .dual-range .track-fill {
+      position: absolute;
+      height: 6px;
+      top: 9px;
+      background: oklch(55% 0.15 105);
+      border-radius: 3px;
+    }
+  </style>
+</head>
 <body>
-<div id="marg"></div>
-<div id="mySlider" class="noUi-target noUi-ltr noUi-horizontal" style="margin-left: 20%; margin-right: 20%"></div>
+  <header>
+    <div class="chord-display" id="chord">
+      <span class="chord-root" id="root">-</span>
+      <span class="chord-ext" id="ext"></span>
+    </div>
+    <div class="range-wrap">
+      <span class="range-label" id="lowNote">C3</span>
+      <div class="dual-range">
+        <div class="track"></div>
+        <div class="track-fill" id="trackFill"></div>
+        <input type="range" id="lowRange" min="24" max="96" value="24">
+        <input type="range" id="highRange" min="24" max="96" value="96">
+      </div>
+      <span class="range-label" id="highNote">C6</span>
+    </div>
+    <button id="pause">PAUSE [Space]</button>
+    <button id="heightMode">FIXED</button>
+  </header>
 
-<section>
-    <div id="noteStart">Start</div>
+  <div id="container">
+    <div class="overlay" id="overlay">
+      <button id="start">Ready!</button>
+    </div>
+    <canvas id="c"></canvas>
+  </div>
 
-    <input type="button" id="myHeightBtn" value="relative"/>
+  <script src="pitchplease.js"></script>
+  <script>
+    const { create, midiToNote, NOTE_NAMES } = PitchPlease;
 
-    <div class="chordDisplay">
-            <div class="chordRoot" id="root"><span id="basenote"></span></div>
-            <div class="chordExtend"><span id="chordtext"></span></div>
-        </div>
-    <input type="button" id="pauser" value="PAUSE [Space]"/>
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    const chordEl = document.getElementById('chord');
+    const rootEl = document.getElementById('root');
+    const extEl = document.getElementById('ext');
 
-    <div id="noteEnd">End</div>
-</section>
+    // Range slider
+    const lowRange = document.getElementById('lowRange');
+    const highRange = document.getElementById('highRange');
+    const lowNote = document.getElementById('lowNote');
+    const highNote = document.getElementById('highNote');
+    const trackFill = document.getElementById('trackFill');
 
+    let midiLow = 24, midiHigh = 96;
 
-</div>
-<div id = 'container'>
-    <canvas id="myCanvas"></canvas>
+    function updateRange() {
+      const lo = +lowRange.value, hi = +highRange.value;
+      if (lo > hi - 12) { // min 1 octave span
+        if (this === lowRange) lowRange.value = hi - 12;
+        else highRange.value = lo + 12;
+      }
+      midiLow = +lowRange.value;
+      midiHigh = +highRange.value;
+      lowNote.textContent = midiToNote(midiLow, true);
+      highNote.textContent = midiToNote(midiHigh, true);
+      // Update fill bar
+      const pct = v => (v - 24) / 72 * 100;
+      trackFill.style.left = pct(midiLow) + '%';
+      trackFill.style.right = (100 - pct(midiHigh)) + '%';
+    }
+    lowRange.oninput = updateRange;
+    highRange.oninput = updateRange;
+    updateRange();
 
-</div>
-    <script src= "./rangeSlider/nouislider.min.js"></script>
-    <script src= "./PP.js"></script>
-    <script src= "./PitchFinder.js"></script>
-    <script src= "./Visualize.js"></script>
-</body>
-</html>
-
-<script>
-
-    var chrome   = navigator.userAgent.indexOf('Chrome') > -1;
-    var explorer = navigator.userAgent.indexOf('MSIE') > -1;
-    var firefox  = navigator.userAgent.indexOf('Firefox') > -1;
-    var safari   = navigator.userAgent.indexOf("Safari") > -1;
-    var camino   = navigator.userAgent.indexOf("Camino") > -1;
-    var opera    = navigator.userAgent.toLowerCase().indexOf("op") > -1;
-    if ((chrome) && (safari)) safari = false;
-    if ((chrome) && (opera)) chrome = false;
-
-//    var isSafari = /constructor/i.test(window.HTMLElement) || (function (p) { return p.toString() === "[object SafariRemoteNotification]"; })(!window['safari'] || safari.pushNotification);
-
-    let mobilecheck = function() {
-        var check = false;
-        (function(a){if(/(android|bb\d+|meego).+mobile|avantgo|bada\/|blackberry|blazer|compal|elaine|fennec|hiptop|iemobile|ip(hone|od)|iris|kindle|lge |maemo|midp|mmp|mobile.+firefox|netfront|opera m(ob|in)i|palm( os)?|phone|p(ixi|re)\/|plucker|pocket|psp|series(4|6)0|symbian|treo|up\.(browser|link)|vodafone|wap|windows ce|xda|xiino/i.test(a)||/1207|6310|6590|3gso|4thp|50[1-6]i|770s|802s|a wa|abac|ac(er|oo|s\-)|ai(ko|rn)|al(av|ca|co)|amoi|an(ex|ny|yw)|aptu|ar(ch|go)|as(te|us)|attw|au(di|\-m|r |s )|avan|be(ck|ll|nq)|bi(lb|rd)|bl(ac|az)|br(e|v)w|bumb|bw\-(n|u)|c55\/|capi|ccwa|cdm\-|cell|chtm|cldc|cmd\-|co(mp|nd)|craw|da(it|ll|ng)|dbte|dc\-s|devi|dica|dmob|do(c|p)o|ds(12|\-d)|el(49|ai)|em(l2|ul)|er(ic|k0)|esl8|ez([4-7]0|os|wa|ze)|fetc|fly(\-|_)|g1 u|g560|gene|gf\-5|g\-mo|go(\.w|od)|gr(ad|un)|haie|hcit|hd\-(m|p|t)|hei\-|hi(pt|ta)|hp( i|ip)|hs\-c|ht(c(\-| |_|a|g|p|s|t)|tp)|hu(aw|tc)|i\-(20|go|ma)|i230|iac( |\-|\/)|ibro|idea|ig01|ikom|im1k|inno|ipaq|iris|ja(t|v)a|jbro|jemu|jigs|kddi|keji|kgt( |\/)|klon|kpt |kwc\-|kyo(c|k)|le(no|xi)|lg( g|\/(k|l|u)|50|54|\-[a-w])|libw|lynx|m1\-w|m3ga|m50\/|ma(te|ui|xo)|mc(01|21|ca)|m\-cr|me(rc|ri)|mi(o8|oa|ts)|mmef|mo(01|02|bi|de|do|t(\-| |o|v)|zz)|mt(50|p1|v )|mwbp|mywa|n10[0-2]|n20[2-3]|n30(0|2)|n50(0|2|5)|n7(0(0|1)|10)|ne((c|m)\-|on|tf|wf|wg|wt)|nok(6|i)|nzph|o2im|op(ti|wv)|oran|owg1|p800|pan(a|d|t)|pdxg|pg(13|\-([1-8]|c))|phil|pire|pl(ay|uc)|pn\-2|po(ck|rt|se)|prox|psio|pt\-g|qa\-a|qc(07|12|21|32|60|\-[2-7]|i\-)|qtek|r380|r600|raks|rim9|ro(ve|zo)|s55\/|sa(ge|ma|mm|ms|ny|va)|sc(01|h\-|oo|p\-)|sdk\/|se(c(\-|0|1)|47|mc|nd|ri)|sgh\-|shar|sie(\-|m)|sk\-0|sl(45|id)|sm(al|ar|b3|it|t5)|so(ft|ny)|sp(01|h\-|v\-|v )|sy(01|mb)|t2(18|50)|t6(00|10|18)|ta(gt|lk)|tcl\-|tdg\-|tel(i|m)|tim\-|t\-mo|to(pl|sh)|ts(70|m\-|m3|m5)|tx\-9|up(\.b|g1|si)|utst|v400|v750|veri|vi(rg|te)|vk(40|5[0-3]|\-v)|vm40|voda|vulc|vx(52|53|60|61|70|80|81|83|85|98)|w3c(\-| )|webc|whit|wi(g |nc|nw)|wmlb|wonu|x700|yas\-|your|zeto|zte\-/i.test(a.substr(0,4))) check = true;})(navigator.userAgent||navigator.vendor||window.opera);
-        return check;
+    // Height mode toggle
+    let absolute = true;
+    const heightModeBtn = document.getElementById('heightMode');
+    heightModeBtn.onclick = () => {
+      absolute = !absolute;
+      heightModeBtn.textContent = absolute ? 'FIXED' : 'AUTO';
     };
 
-    let isMobile = mobilecheck();
-    if (isMobile) {
-        alert("I made this for desktop, but go ahead and try. It might be slow")
+    // HSL color from pitch class (chromatic circle)
+    function pcColor(pc, s = 80, l = 50, a = 1) {
+      const h = (360 - pc * 30 + 60) % 360;
+      return `hsla(${h},${s}%,${l}%,${a})`;
     }
 
-
-    if ( !chrome && !firefox) {
-        alert("Made for Chrome or Firefox. NOT WORKING on your browser. I used fancy new audio tech that is too future for most browsers. Try FIREFOX or CHROME")
+    function resize() {
+      canvas.width = canvas.clientWidth * devicePixelRatio;
+      canvas.height = canvas.clientHeight * devicePixelRatio;
     }
+    resize();
+    window.onresize = resize;
 
+    // State for stable display
+    let lastNotesKey = '';
+    let lastChord = null;
+    let chordHoldFrames = 0;
 
+    const p = create({
+      onUpdate(d) {
+        const w = canvas.width, h = canvas.height;
+        const dpr = devicePixelRatio;
 
-    const chromaticC = [
-        "C",
-        "C#",
-        "D",
-        "D#",
-        "E",
-        "F",
-        "F#",
-        "G",
-        "G#",
-        "A",
-        "A#",
-        "B",
-        "C"
-    ];
+        // Clear
+        ctx.fillStyle = 'oklch(8% 0 0)';
+        ctx.fillRect(0, 0, w, h);
 
+        // Draw spectrum bars (vivid colors by pitch class)
+        const midiSpan = midiHigh - midiLow;
+        const maxE = absolute ? 180 : d.maxEnergy; // 180 so typical voice ~80-90%
+        for (let i = 0; i < d.spectrum.length; i++) {
+          const midi = d.binMidi[i];
+          if (midi < midiLow || midi > midiHigh) continue;
+          const e = d.spectrum[i] / maxE;
+          if (e < 0.02) continue;
 
-    const CHORD_STRUCTURES = [
-        ["Major", 4, 7],
-        ["Major 6th", 4, 7, 9],
-        ["Dominant 7th", 4, 7, 10],
-        ["Major 7th", 4, 7, 11],
-        ["Minor", 3, 7],
-        ["Minor 6th", 3, 7, 9],
-        ["Minor 7th", 3, 7, 10],
-        ["Augmented", 4, 8],
-        ["Diminished 7th", 3, 6, 9],
-        ["Suspended 4", 5, 7],
-        ["Suspended 2", 2, 7]
-    ];
-    const CHORDS_ABBREVIATED = {
-        Major: "",
-        Major6th: "maj6",
-        Dominant7th: "7",
-        Major7th: "m7",
-        Minor: "m",
-        Minor6th: "m6",
-        Minor7th: "m7",
-        Augmented: "aug",
-        Diminished7th: "dim7",
-        Suspended4: "sus4",
-        Suspended2: "sus2"
-    }
-
-    const myCanv = document.getElementById('myCanvas');
-    const contain = document.getElementById("#container")
-    const PP = new Spectrum();
-    const Finder = new PitchFinder();
-    const v = new Visualizer(myCanv, container);
-
-    let startMidi = 48;
-    let endMidi = 78;
-    let slider = document.getElementById('mySlider');
-
-    noUiSlider.create(slider, {
-        start: [startMidi, endMidi],
-        connect: true,
-        range: {
-            'min': 36,
-            'max': 88
+          const x = (midi - midiLow) / midiSpan * w;
+          const bh = e * h * 0.9;
+          // Vivid colors: brightness follows energy
+          ctx.fillStyle = pcColor(Math.round(midi) % 12, 70 + e * 20, 35 + e * 25, 0.95);
+          ctx.fillRect(x, h - bh, Math.max(2, w / midiSpan / 2), bh);
         }
+
+        // Draw detected note labels ON the spectrogram
+        for (let i = 0; i < d.fundCount; i++) {
+          const midi = Math.round(d.fundMidis[i]);
+          if (midi < midiLow || midi > midiHigh) continue;
+
+          // Find energy at this MIDI note
+          let energy = 0;
+          for (let j = 0; j < d.binMidi.length; j++) {
+            if (Math.abs(d.binMidi[j] - midi) < 0.5) {
+              energy = Math.max(energy, d.spectrum[j] / maxE);
+            }
+          }
+
+          const x = (midi - midiLow) / midiSpan * w;
+          const pc = midi % 12;
+          const y = h - (h * energy) / 2;
+
+          // Colored square - vivid
+          const size = 55 * dpr;
+          ctx.fillStyle = pcColor(pc, 85, 55, 0.9);
+          ctx.fillRect(x - size/2, y - size/2, size, size);
+
+          // Note name
+          ctx.fillStyle = 'white';
+          ctx.font = `bold ${26 * dpr}px Helvetica`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(midiToNote(midi, false), x, y);
+        }
+
+        // Stability indicator
+        if (d.stable) {
+          ctx.fillStyle = 'hsla(120, 60%, 50%, 0.4)';
+          ctx.fillRect(0, h - 4, w, 4);
+        }
+
+        // Update chord display (with hold)
+        if (d.chord && d.stable) {
+          lastChord = d.chord;
+          chordHoldFrames = 60;
+        }
+
+        if (chordHoldFrames > 0) {
+          chordHoldFrames--;
+          if (lastChord) {
+            rootEl.textContent = lastChord.root;
+            extEl.textContent = lastChord.abbrev;
+            chordEl.style.background = pcColor(lastChord.rootPc, 80, 40, 0.9);
+          }
+        } else {
+          rootEl.textContent = '-';
+          extEl.textContent = '';
+          chordEl.style.background = 'transparent';
+        }
+      },
+
+      onError(e) { alert(e.message); }
     });
 
-    const startNote = document.getElementById('noteStart');
-    const endNote = document.getElementById('noteEnd');
+    document.getElementById('start').onclick = async () => {
+      document.getElementById('overlay').classList.add('hidden');
+      await p.start();
+    };
 
-
-    let chordExtend = document.getElementById("chordtext");
-    let chordDisplay = document.getElementsByClassName("chordDisplay")[0];
-    let basenoteText = document.getElementById("basenote");
-    let rootBG = document.getElementById("root");
-
-
-    let pauseBtn = document.getElementById('pauser');
-    let heightBtn = document.getElementById('myHeightBtn');
-
-
-    let pause = false;
-
-    pauseBtn.onclick = doPause;
-    window.addEventListener('keydown', function (ev) {
-        if (ev.keyCode === 32) {
-            ev.preventDefault();
-            doPause();
-            console.log("pause");
-        }
-    });
-
-    function doPause (ev) {
-        pause = !pause;
-        if (!pause) {
-            loop();
-            pauseBtn.value = "PAUSE [Space]"
-        }
-        else {
-            pauseBtn.value = "UNPAUSE [Space]"
-        }
+    const pauseBtn = document.getElementById('pause');
+    function togglePause() {
+      const paused = p.togglePause();
+      pauseBtn.textContent = paused ? 'RESUME [Space]' : 'PAUSE [Space]';
     }
 
-    heightBtn.onclick = function () {
-        PP.displayAbsolute = !PP.displayAbsolute;
-        heightBtn.value = PP.displayAbsolute ? "absolute" : "relative";
-    }
-
-    let bufferCount = 0;
-    let winnerBins;
-    let lastNoteGuess = [];
-
-
-    let drawUntilBin = Math.ceil(PP.midiToHz(endMidi) /PP.hzPerBin);
-
-    setBinPosAndWidth();
-
-    slider.noUiSlider.on('update', function(){
-        startMidi = slider.noUiSlider.get()[0];
-        endMidi = slider.noUiSlider.get()[1];
-        startNote.innerHTML = PP.midiToNoteName(startMidi, "deluxe");
-        endNote.innerHTML = PP.midiToNoteName(endMidi, "deluxe");
-//        PP.updateBinCount(PP.midiToBin(endMidi+3)); //performance
-        setBinPosAndWidth();
-//        loop();
-    });
-
-    function setBinPosAndWidth () {
-
-
-        PP.spectrum.forEach (function (bin) {
-            bin.posX = calcX(bin.midi, startMidi-1, endMidi+1); //little room
-        });
-
-        let binInGame = PP.midiToBin(endMidi) - PP.midiToBin(startMidi) ;
-            PP.spectrum.forEach (function (bin) { //because posX setter is (n-1)
-            if (bin.binNr > 0 && bin.binNr < PP.spectrum.length-1) {
-                bin.width = calcWidth(bin.binNr, PP.spectrum) * binInGame; //TODO until endMidi/bin
-            }
-        });
-    }
-
-
-    window.onload = () => loop();
-    const frameBuffer = 4; //frames
-    const bufferMemory = []; //will be a 2D then
-    let chordDisplayBuffer = 0;
-    let chord;
-    let lastchord = [""];
-
-    function loop () {
-        if (PP.gotStream) {
-            v.ctx.clearRect(0, 0, v.canv.width, v.canv.height);
-
-           //GET DATA
-            const binData = PP.spectrum;
-            PP.updateEnergyValues(PP.spectrum);
-            const heighestVal = PP.heighestEnergy;
-
-            //CRUNCH DATA
-            Finder.findPolyPhonic(binData, 0.25);
-
-
-            winnerMidis = Finder.legitMidis || [];
-            winnerNotes = Finder.legitNotes || [];
-
-            bufferMemory.unshift(winnerMidis);
-            bufferMemory.splice(frameBuffer, 2);
-
-            //Filter noise and avoid flickering
-            const displayChord = bufferMemory.every(function (val) {
-              return val.toString() === winnerNotes.toString();
-            }) || winnerNotes.length <= 3; //probably not noise
-
-            // PROBLEM -- > SINCE THE MIDIS COME ROUNDED YOU HAVE 2 Transformations that end up mutated by rounding
-
-            //DRAW DATA
-            v.drawRectInfo(binData); //improve for object
-
-
-            winnerMidis.forEach(function (midi) {
-                    const bin = binData[Math.round (PP.midiToBin(midi))];
-                    let flippedY = v.canv.height - (v.canv.height * bin.energyRel) / 2; //DAMN YOU INVERSE CANVAS!
-
-                    v.drawTextwBackground(bin.posX * v.canv.width, flippedY, PP.midiToNoteName(midi), (bin.midi%12) ); //bin.midi isn't rounded
-            })
-
-            if (displayChord) {
-                chord = notesToChordGuess(Finder.legitNotes.slice(), CHORD_STRUCTURES).split(" "); //intervals in ascending order;
-
-                if (chord[0].length > 0) {
-                    chordDisplayBuffer = 80;
-
-                    lastchord = chord.slice();
-                }
-
-                chordExtend.innerText = CHORDS_ABBREVIATED[chord[1] || lastchord[1]] || "";
-//                console.log(chord[0], chordExtend.innerText, "$");
-                basenoteText.innerText = chord[0] || lastchord[0];
-                if (chord.length > 1) {
-                    chordDisplay.style.background = PP.midiToHSLa(chromaticC.indexOf(chord[0] || lastchord[0]))
-                }
-            }
-
-            if (chordDisplayBuffer > 0) {
-                chordDisplayBuffer--;
-            }
-            if (chordDisplayBuffer < 5) {
-                lastchord=[""]
-            }
-
-        }
-
-        if (!pause) {
-            requestAnimationFrame(loop);
-        }
-    }
-
-        function calcX(me, start, end) {
-            return (me - start) / (end - start);
-        }
-
-        function calcWidth(binNr, allBins, padding = 1.9) { //fill space with neighbors
-            const myPos = allBins[binNr].posX;
-            const leftPos = allBins[binNr - 1].posX;
-            const rightPos = allBins[binNr + 1].posX;
-
-            const width = rightPos - leftPos;
-
-            return width * padding; //get smaller in the end
-        }
-
-    function MatchIntervalwithPossibleChords(interval, allChords) {
-        let chordGuess = "";
-        for (let chordArray of allChords) {
-            let counter = 0; //do all elements fit?
-
-            for (let j = 1; j < chordArray.length; j++) {
-                if (chordArray[j] === interval[j - 1]) { //both are sorted...CHORDSTRUCTs just starts with numbers at [1]
-                    counter++; //get enough hits
-                }
-            }
-            if (counter === chordArray.length-1 && counter === interval.length) { //-1 bc of name entry @ [0] //or chordArray.length-1
-                chordGuess = chordArray[0]; //that's where the name is stored
-            }
-        }
-        return chordGuess;
-    }
-
-    function notesToChordGuess(playedNotes, allChordStructures) {
-        const pn = playedNotes.slice(0);
-        let chord = ""; //falsy or empty
-        let myIntervals = ascendingIntervalCombinations(playedNotes); //2D array
-
-        for (let i = 0; i < myIntervals.length; i++) {
-            chord = MatchIntervalwithPossibleChords(myIntervals[i], allChordStructures);
-
-            if (chord) {
-                let basenote = playedNotes[i]%12;
-                return chromaticC[basenote] + " " + chord; //if it's the 2nd interval that matches it was also the second note that is the winner
-            }
-        }
-        return "";
-    }
-
-    function ascendingIntervalCombinations(notes) { //ONLY ASCENDINGLY SORTED ARRAYS!
-        let myNotes = notes.slice(0); //don't mutate
-        if (!isAscending(myNotes)) {
-            throw "Not Ascending Interval @ ascendingIntervalCombinations"
-        }
-        let allIntervalCombinations = []; //will be 2D array
-        for (let note of myNotes) { //one time for everybody to be first in array once
-            let intervals = [];
-
-            for (let i = 1; i < myNotes.length; i++) { //get difference to every non-self entry intervals.length = notes.length-1 then. Derivatives
-                intervals.push(calcInterval(myNotes[0], myNotes[i]));
-                //always take the delta from the first item (we'll put that on the end of array after loop);
-            }
-            allIntervalCombinations.push(intervals); //save the interval to later cross check with chordGuess
-
-            //shift baseNote from start to End
-            let moveToEnd = myNotes[0]; //move first entry in array to end -- SPLICE returned an array...fuck it
-            moveToEnd += 12; //to get a correct stepsize from e.g B to A...so that it's 10, not -2 ___that's the mathformat CHORDSTRUCTs are in
-            myNotes.push(moveToEnd);
-            myNotes.splice(0, 1); //remove the double entry
-        }
-        return allIntervalCombinations;
-    }
-
-    function isAscending(array) {
-        for (let i = 0; i < array.length - 1; i++) {
-            if (!(array[i] < array[i + 1])) {
-                return false;
-            }
-        }
-        return true;
-    }
-    function calcInterval(pitch1, pitch2) {
-        return Math.abs(pitch1 - pitch2);
-    }
-
-    function whatBrowser() {
-
-    }
-
-    function alertIfBrowserIsNot(browser) {
-        var isOpera = (!!window.opr && !!opr.addons) || !!window.opera || navigator.userAgent.indexOf(' OPR/') >= 0;
-
-        // Firefox 1.0+
-        var isFirefox = typeof InstallTrigger !== 'undefined';
-
-        // Safari 3.0+ "[object HTMLElementConstructor]"
-        var isSafari = /constructor/i.test(window.HTMLElement) || (function (p) { return p.toString() === "[object SafariRemoteNotification]"; })(!window['safari'] || safari.pushNotification);
-
-        // Internet Explorer 6-11
-        var isIE = /*@cc_on!@*/false || !!document.documentMode;
-
-        // Edge 20+
-        var isEdge = !isIE && !!window.StyleMedia;
-
-        // Chrome 1+
-        var isChrome = !!window.chrome && !!window.chrome.webstore;
-
-        // Blink engine detection
-        var isBlink = (isChrome || isOpera) && !!window.CSS;
-
-
-
-
-    }
-
-
-
-</script>
+    pauseBtn.onclick = togglePause;
+    document.onkeydown = e => {
+      if (e.code === 'Space') { e.preventDefault(); togglePause(); }
+    };
+  </script>
+</body>
+</html>
