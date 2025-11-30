@@ -4,6 +4,8 @@ Polyphonic pitch detection in the browser. No dependencies, no build step.
 
 **~16ms latency** at 60fps. Detects multiple simultaneous pitches and chords in real-time.
 
+**[Try the live demo →](https://markusstrasser.github.io/pitchplease/)**
+
 ## Install
 
 ```bash
