@@ -216,15 +216,17 @@ function createPolyphon(opts = {}) {
       }
     }
 
-    // Find fundamentals (harmonic sieve)
+    // Find fundamentals (harmonic sieve - stricter like original algorithm)
     fundCount = 0;
     if (peakCount > 0) {
       const peakMidis = new Float32Array(peakCount);
+      const harmonicCount = new Uint8Array(peakCount);
       const scores = new Float32Array(peakCount);
       const used = new Uint8Array(peakCount);
 
       for (let i = 0; i < peakCount; i++) peakMidis[i] = binToMidi(peakBins[i], hzPerBin);
 
+      // Score each peak: must have harmonics to be considered a fundamental
       for (let i = 0; i < peakCount; i++) {
         const m = peakMidis[i];
         if (m < 24 || m > 96) continue;
@@ -232,26 +234,36 @@ function createPolyphon(opts = {}) {
         for (let n = 2; n <= config.numHarmonics; n++) {
           const exp = m + 12 * Math.log2(n);
           for (let j = 0; j < peakCount; j++) {
-            if (j !== i && Math.abs(peakMidis[j] - exp) < 0.5) { s += peakEnergies[j]/n; h++; break; }
+            if (j !== i && Math.abs(peakMidis[j] - exp) < 0.7) { s += peakEnergies[j]/n; h++; break; }
           }
         }
-        scores[i] = s * Math.sqrt(h);
+        harmonicCount[i] = h;
+        // Require at least 2 harmonics to be a valid fundamental (like original)
+        scores[i] = h >= 2 ? s * Math.sqrt(h) : 0;
       }
 
       let maxS = 0;
       for (let i = 0; i < peakCount; i++) if (scores[i] > maxS) maxS = scores[i];
       if (maxS > 0) for (let i = 0; i < peakCount; i++) scores[i] /= maxS;
 
+      // Only accept fundamentals with score > 0.5 (stricter threshold)
       while (fundCount < config.maxFundamentals) {
-        let bi = -1, bs = 0.3;
+        let bi = -1, bs = 0.5;
         for (let i = 0; i < peakCount; i++) if (!used[i] && scores[i] > bs) { bs = scores[i]; bi = i; }
         if (bi < 0) break;
         fundMidis[fundCount++] = peakMidis[bi];
         used[bi] = 1;
+        // Mark all harmonics as used
         const fm = peakMidis[bi];
         for (let n = 2; n <= config.numHarmonics; n++) {
           const exp = fm + 12 * Math.log2(n);
-          for (let j = 0; j < peakCount; j++) if (Math.abs(peakMidis[j] - exp) < 0.5) used[j] = 1;
+          for (let j = 0; j < peakCount; j++) if (Math.abs(peakMidis[j] - exp) < 0.7) used[j] = 1;
+        }
+        // Also mark octaves below as used (if this is a harmonic of a lower note)
+        for (let j = 0; j < peakCount; j++) {
+          if (Math.abs(peakMidis[j] - fm + 12) < 0.7 || Math.abs(peakMidis[j] - fm + 24) < 0.7) {
+            // Lower octave exists - this might be a harmonic, but keep it for now
+          }
         }
       }
     }
