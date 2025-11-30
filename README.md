@@ -2,9 +2,22 @@
 
 Polyphonic pitch detection in the browser. No dependencies, no build step.
 
+**~16ms latency** at 60fps. Detects multiple simultaneous pitches and chords in real-time.
+
 ## Install
 
-Just copy `pitchplease.js` to your project. That's it.
+```bash
+npm install @markusstrasser/pitchplease
+```
+
+Or just copy `pitchplease.js` to your project. That's it.
+
+## Browser Requirements
+
+- **HTTPS or localhost required** - microphone access blocked on HTTP
+- **User gesture required** - `start()` must be called from click/tap handler
+- Chrome, Firefox, Safari, Edge all supported
+- Mobile browsers work but may have higher latency
 
 ## Usage
 
@@ -33,7 +46,6 @@ Just copy `pitchplease.js` to your project. That's it.
   let detector;
 
   onMount(() => {
-    // Load the script
     const script = document.createElement('script');
     script.src = '/pitchplease.js';
     script.onload = () => {
@@ -85,7 +97,7 @@ export function PitchDetector() {
 ### Node/CommonJS (for testing only - no audio in Node)
 
 ```javascript
-const PitchPlease = require('./pitchplease.js');
+const PitchPlease = require('@markusstrasser/pitchplease');
 const chord = PitchPlease.matchChord([0, 4, 7]); // { full: 'C' }
 ```
 
@@ -97,7 +109,7 @@ Creates a detector instance. Returns `{ start, stop, togglePause, paused }`.
 
 ```javascript
 const detector = PitchPlease.create({
-  onUpdate: (data) => {},    // called every frame (~60fps)
+  onUpdate: (data) => {},    // called every frame (~60fps, ~16ms)
   onChord: (chord) => {},    // called when stable chord detected
   onError: (err) => {},      // called on errors
   fftSize: 16384,            // FFT resolution (default: 16384)
@@ -154,6 +166,13 @@ PitchPlease.NOTE_NAMES               // ['C','C#','D',...]
 **Sixths:** 6, m6
 **Extensions:** add9, madd9, 9, m9, maj9, 11, 13
 
+## Performance
+
+- **~16ms** per frame (60fps)
+- FFT: 16384 bins for 3Hz resolution at 48kHz sample rate
+- Processes MIDI range 24-96 (C1-C7)
+- Typical CPU: <5% on modern hardware
+
 ## Dev
 
 ```bash
@@ -169,3 +188,7 @@ bun dev-testing.js
 4. Harmonic sieve groups peaks into fundamentals
 5. Pitch class extraction and stability check
 6. Template matching against chord intervals
+
+## License
+
+MIT
