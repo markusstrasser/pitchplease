@@ -1,0 +1,32 @@
+{
+  "name": "pitchplease",
+  "version": "2.0.0",
+  "description": "Polyphonic pitch detection in the browser. No dependencies.",
+  "main": "pitchplease.js",
+  "browser": "pitchplease.js",
+  "types": "pitchplease.d.ts",
+  "files": [
+    "pitchplease.js",
+    "pitchplease.d.ts"
+  ],
+  "scripts": {
+    "dev": "bun dev-testing.js"
+  },
+  "keywords": [
+    "pitch",
+    "detection",
+    "polyphonic",
+    "chord",
+    "audio",
+    "music",
+    "fft",
+    "web-audio"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-username/pitchplease.git"
+  },
+  "homepage": "https://github.com/your-username/pitchplease#readme"
+}
