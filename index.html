@@ -313,8 +313,8 @@
           rootEl.textContent = midiToNote(d.fundMidis[0], false);
           extEl.textContent = '';
           chordEl.style.background = pcColor(pc, 80, 40, 0.9);
-        } else if (chordHoldFrames > 0) {
-          // Hold previous chord briefly
+        } else if (chordHoldFrames > 0 && !d.stable) {
+          // Hold the previous chord through an unsettled transition; silence clears via the library's clearAfterMs
           chordHoldFrames--;
           if (lastChord) {
             rootEl.textContent = lastChord.root;

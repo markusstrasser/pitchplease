@@ -113,9 +113,11 @@ Creates a detector instance. Returns `{ start, stop, togglePause, paused }`.
 const detector = PitchPlease.create({
   onUpdate: (data) => {},    // called every frame (~60fps, ~16ms)
   onChord: (chord) => {},    // called when stable chord detected
+  onChordEnd: () => {},      // called when the held chord clears after silence
   onError: (err) => {},      // called on errors
   fftSize: 16384,            // FFT resolution (default: 16384)
   stabilityFrames: 4,        // frames before chord is stable (default: 4)
+  clearAfterMs: 200,         // silence before the held chord clears (default: 200)
 });
 
 await detector.start();      // request mic, start detection
@@ -134,7 +136,7 @@ detector.paused;             // boolean
   fundCount,     // number - how many pitches detected
   pitchClasses,  // number[] - unique pitch classes [0-11]
   stable,        // boolean - has detection stabilized?
-  chord,         // object | null - detected chord
+  chord,         // object | null - held chord: kept until another chord matches, null after clearAfterMs of silence
   maxEnergy,     // number - loudest FFT bin this frame
 }
 ```

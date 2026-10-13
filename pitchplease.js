@@ -102,6 +102,28 @@ function matchChord(pitchClasses) {
   return null;
 }
 
+// Held chord: a matched chord stays until another chord matches, and clears once no pitch class has been heard for
+// clearAfterMs, so the display goes blank soon after the sound stops. Gaps inside playing are shorter: 95% of the
+// moments with nothing detected last under 80-110 ms in pitchtest's guitar and piano measurements.
+function createChordHold(clearAfterMs = 200) {
+  let chord = null, silentSince = null;
+  return {
+    // pcs: pitch classes heard this frame; stable: the set has held for stabilityFrames; now: a ms timestamp.
+    // Returns 'chord' when a new chord is held, 'clear' when the held chord ends, otherwise null.
+    update(pcs, stable, now) {
+      if (pcs.length) silentSince = null;
+      else if (silentSince === null) silentSince = now;
+      if (stable && pcs.length >= 2) {
+        const c = matchChord(pcs);
+        if (c && c.full !== chord?.full) { chord = c; return 'chord'; }
+      }
+      if (chord && silentSince !== null && now - silentSince >= clearAfterMs) { chord = null; return 'clear'; }
+      return null;
+    },
+    get chord() { return chord; },
+  };
+}
+
 // ============ MAIN ============
 
 function createPolyphon(opts = {}) {
@@ -109,6 +131,7 @@ function createPolyphon(opts = {}) {
     fftSize: opts.fftSize || 16384,
     binCount: opts.binCount || 500,
     stabilityFrames: opts.stabilityFrames || 4,
+    clearAfterMs: opts.clearAfterMs ?? 200,
     maxPeaks: 64,
     maxFundamentals: 8,
     numHarmonics: 6,
@@ -117,6 +140,7 @@ function createPolyphon(opts = {}) {
   // Callbacks
   const onUpdate = opts.onUpdate || (() => {});
   const onChord = opts.onChord || (() => {});
+  const onChordEnd = opts.onChordEnd || (() => {});
   const onError = opts.onError || (e => console.error(e));
 
   // Audio state
@@ -134,7 +158,7 @@ function createPolyphon(opts = {}) {
   // Stability
   const history = [];
   let stable = false;
-  let lastChord = null;
+  const hold = createChordHold(config.clearAfterMs);
   let running = false, paused = false;
 
   // ---- Audio Setup ----
@@ -278,20 +302,16 @@ function createPolyphon(opts = {}) {
     if (history.length > config.stabilityFrames) history.pop();
     stable = history.length >= config.stabilityFrames && history.every(h => h === history[0]);
 
-    // Chord matching
-    if (stable && uniquePcs.length >= 2) {
-      const chord = matchChord(uniquePcs);
-      if (chord && chord.full !== lastChord?.full) {
-        lastChord = chord;
-        onChord(chord);
-      }
-    }
+    // Chord matching (held until another chord matches or clearAfterMs of silence)
+    const event = hold.update(uniquePcs, stable, performance.now());
+    if (event === 'chord') onChord(hold.chord);
+    else if (event === 'clear') onChordEnd();
 
     // Callback
     onUpdate({
       spectrum, binMidi, peakBins, peakEnergies, peakCount,
       fundMidis, fundCount, pitchClasses: uniquePcs, stable,
-      chord: lastChord, maxEnergy: maxE, threshold,
+      chord: hold.chord, maxEnergy: maxE, threshold,
     });
 
     requestAnimationFrame(loop);
@@ -303,6 +323,7 @@ function createPolyphon(opts = {}) {
 // Export (supports both global and ES modules)
 const PitchPlease = {
   create: createPolyphon,
+  createChordHold,
   matchChord,
   midiToNote,
   pitchClassToColor,
