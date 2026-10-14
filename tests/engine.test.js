@@ -114,6 +114,8 @@ describe('model metadata', () => {
     expect(pkg.version).toBe('3.0.0');
     expect(pkg.type).toBe('module');
     expect(pkg.exports['.'].default).toBe('./pitchplease.js');
+    // only what consumers need: narrowing after 3.0.0 would be breaking
+    expect(Object.keys(pkg.exports)).toEqual(['.', './engine/worklet.js', './engine/*.wasm', './models/*', './package.json']);
     expect(pkg.files).toEqual(expect.arrayContaining(['pitchplease.js', 'pitchplease.d.ts', 'engine/', 'models/']));
     expect(pkg.dependencies).toBeUndefined();
   });

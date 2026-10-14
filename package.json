@@ -11,7 +11,8 @@
       "types": "./pitchplease.d.ts",
       "default": "./pitchplease.js"
     },
-    "./engine/*": "./engine/*",
+    "./engine/worklet.js": "./engine/worklet.js",
+    "./engine/*.wasm": "./engine/*.wasm",
     "./models/*": "./models/*",
     "./package.json": "./package.json"
   },
