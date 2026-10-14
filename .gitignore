@@ -1,2 +1,5 @@
 *.iml
 /.idea
+/node_modules
+/tests/ui-shots/
+*.tgz

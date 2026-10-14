@@ -1,351 +1,291 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PitchPlease</title>
+  <link rel="icon" href="data:,">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: oklch(10% 0 0);
+      --panel: oklch(15% 0 0);
+      --line: oklch(30% 0 0);
+      --text: oklch(96% 0 0);
+      --muted: oklch(70% 0 0);
+      --accent: oklch(90% 0.2 105);
+      --warn: oklch(80% 0.17 75);
+      --bad: oklch(68% 0.2 25);
+    }
     body {
       font-family: Helvetica, system-ui, sans-serif;
-      background: oklch(10% 0 0);
-      color: white;
+      background: var(--bg);
+      color: var(--text);
       height: 100vh;
       display: flex;
       flex-direction: column;
     }
-
     header {
       display: flex;
       align-items: center;
-      justify-content: center;
-      gap: 2rem;
-      padding: 0.8rem;
-      background: oklch(15% 0 0);
+      gap: 1.2rem;
+      padding: 0.8rem 1rem;
+      background: var(--panel);
+      flex-wrap: wrap;
     }
-
     .chord-display {
       display: flex;
       align-items: baseline;
-      padding: 0.4rem 1.2rem;
-      border-radius: 6px;
-      border: 1px solid oklch(30% 0 0);
-      min-width: 100px;
       justify-content: center;
+      padding: 0.3rem 1rem;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      min-width: 110px;
+      transition: background 120ms;
     }
-    .chord-root {
-      font-size: 2.2rem;
-      font-weight: bold;
+    .chord-root { font-size: 2.2rem; font-weight: bold; }
+    .chord-ext { font-size: 1.4rem; opacity: 0.9; }
+    #notes {
+      flex: 1;
+      min-width: 8rem;
+      font-size: 1.1rem;
+      font-variant-numeric: tabular-nums;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
-    .chord-ext {
-      font-size: 1.4rem;
-      font-weight: normal;
-      opacity: 0.9;
-    }
-
+    .meter { display: flex; flex-direction: column; gap: 4px; min-width: 150px; font-size: 0.8rem; color: var(--muted); }
+    .meter .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+    .meter .fill { height: 100%; width: 0; background: var(--accent); transition: width 300ms, background 300ms; }
+    .meter.hot .fill { background: var(--warn); }
+    .meter.over .fill { background: var(--bad); }
     button {
       border: 0;
-      outline: 0;
-      padding: 0.6rem 1.5rem;
+      padding: 0.6rem 1.2rem;
       font-size: 0.9rem;
       border-radius: 4px;
       cursor: pointer;
-      background: oklch(90% 0.2 105);
+      background: var(--accent);
       color: oklch(20% 0 0);
       font-weight: 500;
     }
-    button:hover { background: oklch(93% 0.2 105); }
+    button:hover { filter: brightness(1.05); }
 
-    #container {
-      flex: 1;
-      position: relative;
+    #models {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.6rem;
+      padding: 0.6rem 1rem;
+      background: var(--panel);
+      border-top: 1px solid var(--line);
     }
-    canvas {
-      width: 100%;
-      height: 100%;
-      display: block;
-    }
-
-    .overlay {
-      position: absolute;
-      inset: 0;
-      background: oklch(5% 0 0 / 95%);
+    .model {
+      text-align: left;
+      background: oklch(19% 0 0);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0.55rem 0.7rem;
       display: flex;
-      align-items: center;
-      justify-content: center;
+      flex-direction: column;
+      gap: 0.3rem;
+      font-weight: normal;
+    }
+    .model[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+    .model .name { font-weight: bold; font-size: 1rem; display: flex; justify-content: space-between; gap: 0.5rem; }
+    .model .name small { font-weight: normal; color: var(--muted); }
+    .model .use { font-size: 0.78rem; color: var(--muted); line-height: 1.3; }
+    .model .facts { font-size: 0.75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .model .facts b { color: var(--text); font-weight: 600; }
+
+    #container { flex: 1; position: relative; min-height: 0; }
+    canvas { width: 100%; height: 100%; display: block; }
+    #status {
+      position: absolute; left: calc(34px + 0.8rem); bottom: 0.6rem; font-size: 0.75rem; color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+    #error {
+      position: absolute; left: 1rem; right: 1rem; top: 0.8rem; padding: 0.7rem 1rem; border-radius: 6px;
+      background: oklch(30% 0.1 25); border: 1px solid var(--bad); font-size: 0.9rem; display: none;
+    }
+    #error.show { display: block; }
+    .overlay {
+      position: absolute; inset: 0; background: oklch(5% 0 0 / 95%);
+      display: flex; flex-direction: column; gap: 1rem; align-items: center; justify-content: center; text-align: center; padding: 1rem;
     }
     .overlay.hidden { display: none; }
-    .overlay button {
-      padding: 1.2rem 2.5rem;
-      font-size: 1.5rem;
-      border-radius: 8px;
-    }
-
-    /* Dual range slider */
-    .range-wrap {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-    }
-    .range-label {
-      font-size: 0.85rem;
-      min-width: 2.5rem;
-      text-align: center;
-      opacity: 0.8;
-    }
-    .dual-range {
-      position: relative;
-      width: 180px;
-      height: 24px;
-    }
-    .dual-range input[type="range"] {
-      position: absolute;
-      width: 100%;
-      height: 6px;
-      top: 9px;
-      pointer-events: none;
-      -webkit-appearance: none;
-      appearance: none;
-      background: transparent;
-    }
-    .dual-range input[type="range"]::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      height: 18px;
-      width: 18px;
-      border-radius: 50%;
-      background: oklch(90% 0.2 105);
-      cursor: pointer;
-      pointer-events: auto;
-      border: 2px solid oklch(20% 0 0);
-    }
-    .dual-range input[type="range"]::-moz-range-thumb {
-      height: 18px;
-      width: 18px;
-      border-radius: 50%;
-      background: oklch(90% 0.2 105);
-      cursor: pointer;
-      pointer-events: auto;
-      border: 2px solid oklch(20% 0 0);
-    }
-    .dual-range .track {
-      position: absolute;
-      height: 6px;
-      top: 9px;
-      left: 0;
-      right: 0;
-      background: oklch(30% 0 0);
-      border-radius: 3px;
-    }
-    .dual-range .track-fill {
-      position: absolute;
-      height: 6px;
-      top: 9px;
-      background: oklch(55% 0.15 105);
-      border-radius: 3px;
+    .overlay button { padding: 1.2rem 2.5rem; font-size: 1.5rem; border-radius: 8px; }
+    .overlay p { color: var(--muted); max-width: 32rem; line-height: 1.4; }
+    @media (max-width: 760px) {
+      #models { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .model .use { display: none; }
     }
   </style>
 </head>
 <body>
   <header>
-    <div class="chord-display" id="chord">
+    <div class="chord-display" id="chord" data-chord="">
       <span class="chord-root" id="root">-</span>
       <span class="chord-ext" id="ext"></span>
     </div>
-    <div class="range-wrap">
-      <span class="range-label" id="lowNote">C3</span>
-      <div class="dual-range">
-        <div class="track"></div>
-        <div class="track-fill" id="trackFill"></div>
-        <input type="range" id="lowRange" min="24" max="96" value="24">
-        <input type="range" id="highRange" min="24" max="96" value="96">
-      </div>
-      <span class="range-label" id="highNote">C6</span>
+    <div id="notes" aria-live="off">&nbsp;</div>
+    <div class="meter" id="meter" title="Detector compute time per second of audio, measured in the audio thread">
+      <span id="cpu">CPU –</span>
+      <div class="bar"><div class="fill" id="cpuFill"></div></div>
     </div>
     <button id="pause">PAUSE [Space]</button>
-    <button id="heightMode">FIXED</button>
   </header>
+  <nav id="models" aria-label="Model"></nav>
 
   <div id="container">
+    <canvas id="c"></canvas>
+    <div id="status"></div>
+    <div id="error" role="alert"></div>
     <div class="overlay" id="overlay">
       <button id="start">Ready!</button>
+      <p>Play or sing something. Pick a model above any time: the switch happens live, without asking for the microphone again.</p>
     </div>
-    <canvas id="c"></canvas>
   </div>
 
-  <script src="pitchplease.js"></script>
-  <script>
-    const { create, midiToNote, NOTE_NAMES } = PitchPlease;
+  <script type="module">
+    import { create, models, midiToNote, pitchClassToColor } from './pitchplease.js';
 
-    const canvas = document.getElementById('c');
-    const ctx = canvas.getContext('2d');
-    const chordEl = document.getElementById('chord');
-    const rootEl = document.getElementById('root');
-    const extEl = document.getElementById('ext');
+    const $ = (id) => document.getElementById(id);
+    const canvas = $('c'), ctx = canvas.getContext('2d');
+    const params = new URLSearchParams(location.search);
+    let model = models.some((m) => m.id === params.get('model')) ? params.get('model') : 'fast';
 
-    // Range slider
-    const lowRange = document.getElementById('lowRange');
-    const highRange = document.getElementById('highRange');
-    const lowNote = document.getElementById('lowNote');
-    const highNote = document.getElementById('highNote');
-    const trackFill = document.getElementById('trackFill');
-
-    let midiLow = 24, midiHigh = 96;
-
-    function updateRange() {
-      const lo = +lowRange.value, hi = +highRange.value;
-      if (lo > hi - 12) { // min 1 octave span
-        if (this === lowRange) lowRange.value = hi - 12;
-        else highRange.value = lo + 12;
-      }
-      midiLow = +lowRange.value;
-      midiHigh = +highRange.value;
-      lowNote.textContent = midiToNote(midiLow, true);
-      highNote.textContent = midiToNote(midiHigh, true);
-      // Update fill bar
-      const pct = v => (v - 24) / 72 * 100;
-      trackFill.style.left = pct(midiLow) + '%';
-      trackFill.style.right = (100 - pct(midiHigh)) + '%';
+    // ---- model picker
+    const cost = (m) => (m.relativeCost == null ? 'tiny CPU' : m.relativeCost === 1 ? '1× CPU' : `${m.relativeCost}× CPU`);
+    const size = (m) => (m.sizeKB ? `${m.sizeKB} KB` : 'no download');
+    for (const [i, m] of models.entries()) {
+      const b = document.createElement('button');
+      b.className = 'model';
+      b.dataset.model = m.id;
+      b.innerHTML = `<span class="name">${m.label} <small>[${i + 1}]</small></span><span class="use">${m.useCase}</span>` +
+        `<span class="facts"><b>${size(m)}</b> · <b>${cost(m)}</b> · piano F1 <b>${m.pianoF1.toFixed(2)}</b> · <b>${m.latencyMs} ms</b></span>`;
+      b.onclick = () => pick(m.id);
+      $('models').append(b);
     }
-    lowRange.oninput = updateRange;
-    highRange.oninput = updateRange;
-    updateRange();
+    function showPicked() {
+      for (const b of document.querySelectorAll('.model')) b.setAttribute('aria-pressed', String(b.dataset.model === model));
+    }
+    showPicked();
 
-    // Height mode toggle
-    let absolute = true;
-    const heightModeBtn = document.getElementById('heightMode');
-    heightModeBtn.onclick = () => {
-      absolute = !absolute;
-      heightModeBtn.textContent = absolute ? 'FIXED' : 'AUTO';
+    // ---- detector
+    const roll = []; // recent frames: { time, notes }
+    let latest = [];
+    const detector = create({
+      model,
+      onNotes(notes, frame) {
+        latest = notes;
+        roll.push({ t: performance.now(), notes });
+        $('notes').textContent = notes.length ? notes.map((n) => n.name).join(' ') : ' ';
+        if (!heldChord) showName(notes[0] ? midiToNote(notes[0].midi) : null, '', notes[0]?.pitchClass);
+      },
+      onChord(chord) { heldChord = chord; showName(chord.root, chord.abbrev, chord.rootPc); $('chord').dataset.chord = chord.full; },
+      onChordEnd() { heldChord = null; showName(null); $('chord').dataset.chord = ''; },
+      onError(e) {
+        $('error').textContent = `${e.message} (${e.code})`;
+        $('error').classList.add('show');
+        console.warn(e);
+      },
+    });
+    window.pitchplease = detector; // for poking at from the console
+
+    let heldChord = null;
+    function showName(root, ext = '', pc) {
+      $('root').textContent = root ?? '-';
+      $('ext').textContent = ext;
+      $('chord').style.background = root == null ? 'transparent' : pitchClassToColor(pc, 80, 40, heldChord ? 0.9 : 0.45);
+    }
+
+    async function pick(id) {
+      if (id === model) return;
+      model = id;
+      showPicked();
+      $('error').classList.remove('show');
+      history.replaceState(null, '', `?model=${id}`);
+      $('status').textContent = `loading ${id}…`;
+      await detector.setModel(id);
+    }
+
+    $('start').onclick = async () => {
+      $('overlay').classList.add('hidden');
+      await detector.start();
+    };
+    const pauseBtn = $('pause');
+    function togglePause() {
+      const paused = detector.togglePause();
+      pauseBtn.textContent = paused ? 'RESUME [Space]' : 'PAUSE [Space]';
+    }
+    pauseBtn.onclick = togglePause;
+    document.onkeydown = (e) => {
+      if (e.code === 'Space') { e.preventDefault(); togglePause(); }
+      const n = Number(e.key);
+      if (n >= 1 && n <= models.length) pick(models[n - 1].id);
     };
 
-    // HSL color from pitch class (chromatic circle)
-    function pcColor(pc, s = 80, l = 50, a = 1) {
-      const h = (360 - pc * 30 + 60) % 360;
-      return `hsla(${h},${s}%,${l}%,${a})`;
-    }
+    // ---- stats
+    setInterval(() => {
+      const s = detector.stats;
+      if (!detector.running) { $('status').textContent = ''; return; }
+      const pct = Math.round(s.cpuLoad * 100);
+      $('cpu').textContent = s.model === 'fft' ? `CPU ${pct}% (main thread)` : `CPU ${pct}% · audio thread`;
+      $('cpuFill').style.width = `${Math.min(100, pct)}%`;
+      $('meter').className = 'meter' + (s.cpuLoad >= 0.8 ? ' over' : s.cpuLoad >= 0.5 ? ' hot' : '');
+      $('status').textContent = `${s.model} · kernel ${s.kernel ?? 'fft'} · ${s.framesPerSecond.toFixed(0)} frames/s · ${(s.sampleRate / 1000).toFixed(1)} kHz` +
+        (s.cpuLoad >= 0.8 && s.model !== 'fast' && s.model !== 'fft' ? ` · this device is struggling with '${s.model}': try Fast` : '');
+    }, 500);
 
+    // ---- piano roll: last 6 s, MIDI 21-108, keyboard on the left
+    const LO = 21, HI = 108, SPAN_MS = 6000;
+    const isBlack = (m) => [1, 3, 6, 8, 10].includes(m % 12);
     function resize() {
       canvas.width = canvas.clientWidth * devicePixelRatio;
       canvas.height = canvas.clientHeight * devicePixelRatio;
     }
     resize();
     window.onresize = resize;
-
-    // State for stable display
-    let lastNotesKey = '';
-    let lastChord = null;
-    let chordHoldFrames = 0;
-
-    const p = create({
-      onUpdate(d) {
-        const w = canvas.width, h = canvas.height;
-        const dpr = devicePixelRatio;
-
-        // Clear
-        ctx.fillStyle = 'oklch(8% 0 0)';
-        ctx.fillRect(0, 0, w, h);
-
-        // Draw spectrum bars (vivid colors by pitch class)
-        const midiSpan = midiHigh - midiLow;
-        const maxE = absolute ? 180 : d.maxEnergy; // 180 so typical voice ~80-90%
-        for (let i = 0; i < d.spectrum.length; i++) {
-          const midi = d.binMidi[i];
-          if (midi < midiLow || midi > midiHigh) continue;
-          const e = d.spectrum[i] / maxE;
-          if (e < 0.02) continue;
-
-          const x = (midi - midiLow) / midiSpan * w;
-          const bh = e * h * 0.9;
-          // Vivid colors: brightness follows energy
-          ctx.fillStyle = pcColor(Math.round(midi) % 12, 70 + e * 20, 35 + e * 25, 0.95);
-          ctx.fillRect(x, h - bh, Math.max(2, w / midiSpan / 2), bh);
+    function draw() {
+      const w = canvas.width, h = canvas.height, dpr = devicePixelRatio;
+      const kb = 34 * dpr, rowH = h / (HI - LO + 1), now = performance.now();
+      ctx.fillStyle = 'oklch(8% 0 0)';
+      ctx.fillRect(0, 0, w, h);
+      const y = (m) => h - (m - LO + 1) * rowH;
+      for (let m = LO; m <= HI; m++) if (isBlack(m)) { ctx.fillStyle = 'oklch(11% 0 0)'; ctx.fillRect(kb, y(m), w - kb, rowH); }
+      while (roll.length && now - roll[0].t > SPAN_MS) roll.shift();
+      const px = (w - kb) / SPAN_MS;
+      for (let i = 0; i < roll.length; i++) {
+        const f = roll[i], x0 = kb + (SPAN_MS - (now - f.t)) * px;
+        const x1 = i + 1 < roll.length ? kb + (SPAN_MS - (now - roll[i + 1].t)) * px : w;
+        for (const n of f.notes) {
+          ctx.fillStyle = pitchClassToColor(n.pitchClass, 85, 55, 0.35 + 0.65 * Math.min(1, n.prob));
+          ctx.fillRect(x0, y(n.midi), Math.max(1, x1 - x0 + 0.5), Math.max(1, rowH - 0.5));
         }
-
-        // Draw detected note labels ON the spectrogram
-        for (let i = 0; i < d.fundCount; i++) {
-          const midi = Math.round(d.fundMidis[i]);
-          if (midi < midiLow || midi > midiHigh) continue;
-
-          // Find energy at this MIDI note
-          let energy = 0;
-          for (let j = 0; j < d.binMidi.length; j++) {
-            if (Math.abs(d.binMidi[j] - midi) < 0.5) {
-              energy = Math.max(energy, d.spectrum[j] / maxE);
-            }
-          }
-
-          const x = (midi - midiLow) / midiSpan * w;
-          const pc = midi % 12;
-          const y = h - (h * energy) / 2;
-
-          // Colored square - vivid
-          const size = 55 * dpr;
-          ctx.fillStyle = pcColor(pc, 85, 55, 0.9);
-          ctx.fillRect(x - size/2, y - size/2, size, size);
-
-          // Note name
-          ctx.fillStyle = 'white';
-          ctx.font = `bold ${26 * dpr}px Helvetica`;
-          ctx.textAlign = 'center';
+      }
+      const on = new Set(latest.map((n) => n.midi));
+      for (let m = LO; m <= HI; m++) {
+        ctx.fillStyle = on.has(m) ? pitchClassToColor(m % 12, 85, 55, 1) : isBlack(m) ? 'oklch(25% 0 0)' : 'oklch(85% 0 0)';
+        ctx.fillRect(0, y(m), isBlack(m) ? kb * 0.65 : kb, Math.max(1, rowH - 0.5));
+        if (m % 12 === 0 && rowH > 5 * dpr) {
+          ctx.fillStyle = 'oklch(35% 0 0)';
+          ctx.font = `${Math.min(10 * dpr, rowH)}px Helvetica`;
           ctx.textBaseline = 'middle';
-          ctx.fillText(midiToNote(midi, false), x, y);
+          ctx.fillText(midiToNote(m, true), kb * 0.4, y(m) + rowH / 2);
         }
-
-        // Stability indicator
-        if (d.stable) {
-          ctx.fillStyle = 'hsla(120, 60%, 50%, 0.4)';
-          ctx.fillRect(0, h - 4, w, 4);
-        }
-
-        // Update chord display or show single note
-        if (d.chord && d.stable) {
-          // Real chord detected
-          lastChord = d.chord;
-          chordHoldFrames = 20;
-          rootEl.textContent = lastChord.root;
-          extEl.textContent = lastChord.abbrev;
-          chordEl.style.background = pcColor(lastChord.rootPc, 80, 40, 0.9);
-        } else if (d.fundCount >= 1 && d.stable) {
-          // Single note (or notes that don't form a chord) - show dominant note
-          chordHoldFrames = 0; // Clear hold buffer
-          lastChord = null;
-          const pc = Math.round(d.fundMidis[0]) % 12;
-          rootEl.textContent = midiToNote(d.fundMidis[0], false);
-          extEl.textContent = '';
-          chordEl.style.background = pcColor(pc, 80, 40, 0.9);
-        } else if (chordHoldFrames > 0 && !d.stable) {
-          // Hold the previous chord through an unsettled transition; silence clears via the library's clearAfterMs
-          chordHoldFrames--;
-          if (lastChord) {
-            rootEl.textContent = lastChord.root;
-            extEl.textContent = lastChord.abbrev;
-            chordEl.style.background = pcColor(lastChord.rootPc, 80, 40, 0.9);
-          }
-        } else {
-          rootEl.textContent = '-';
-          extEl.textContent = '';
-          chordEl.style.background = 'transparent';
-        }
-      },
-
-      onError(e) { alert(e.message); }
-    });
-
-    document.getElementById('start').onclick = async () => {
-      document.getElementById('overlay').classList.add('hidden');
-      await p.start();
-    };
-
-    const pauseBtn = document.getElementById('pause');
-    function togglePause() {
-      const paused = p.togglePause();
-      pauseBtn.textContent = paused ? 'RESUME [Space]' : 'PAUSE [Space]';
+      }
+      const labels = latest.slice(-8);
+      ctx.font = `bold ${Math.max(11 * dpr, Math.min(16 * dpr, rowH * 1.6))}px Helvetica`;
+      ctx.textBaseline = 'middle';
+      for (const n of labels) {
+        ctx.fillStyle = 'white';
+        ctx.fillText(n.name, w - 48 * dpr, y(n.midi) + rowH / 2);
+      }
+      requestAnimationFrame(draw);
     }
-
-    pauseBtn.onclick = togglePause;
-    document.onkeydown = e => {
-      if (e.code === 'Space') { e.preventDefault(); togglePause(); }
-    };
+    draw();
   </script>
 </body>
 </html>

@@ -1,14 +1,19 @@
+// Local dev server for the demo: bun dev-testing.js -> http://localhost:3000 (the mic needs localhost or https)
 const mimes = {
   '.html': 'text/html',
   '.js': 'text/javascript',
   '.css': 'text/css',
+  '.json': 'application/json',
+  '.bin': 'application/octet-stream',
+  '.wasm': 'application/wasm',
+  '.wav': 'audio/wav',
 };
 
 Bun.serve({
   port: 3000,
   async fetch(req) {
     let path = new URL(req.url).pathname;
-    if (path === '/') path = '/app.html';
+    if (path === '/') path = '/index.html';
 
     const ext = path.slice(path.lastIndexOf('.'));
     const file = Bun.file('.' + path);
