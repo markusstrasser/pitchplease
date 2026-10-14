@@ -36,11 +36,10 @@ export interface Note {
 
 export interface Frame {
   /**
-   * analyze(): seconds into the input. Live: seconds of audio the current engine has analysed, pauses left out; it
-   * starts again near 0 when setModel() switches engines.
+   * analyze(): seconds into the input. Live: unpaused session time since start(), continuous across setModel().
    */
   time: number;
-  /** Stream time (s) at which this frame became available; emitTime - time is the detector's own latency. */
+  /** Same clock as time (s), when this frame became available; emitTime - time is the detector's own latency. */
   emitTime: number;
   /** The 88 key probabilities, A0 (index 0) to C8 (index 87). null for 'fft'. */
   probs: Float32Array | null;
@@ -186,18 +185,20 @@ export interface AudioBufferLike {
 export interface Detector {
   /**
    * Open the microphone (or use `source`) and start detecting. Call it from a click or key handler; a context that
-   * still starts suspended resumes on the next click or key press. Calls made while starting or running share that
+   * still starts suspended resumes on the next click or key press. An ended audio track stops detection and reports
+   * mic-ended; start() can be called again. Calls made while starting or running share that
    * outcome; a `source` passed while starting or running is ignored (stop() first). Resolves true once the engine runs, false if start failed (the error went to onError) or stop()
    * cancelled it. Without onError, a failure rejects instead.
    */
   start(source?: MediaStreamLike): Promise<boolean>;
-  /** Stop detecting, release the microphone and clear the pause. A start() still opening is cancelled quietly. */
+  /** Stop detecting, release an owned microphone (a supplied stream is left running) and clear the pause. Cancels a pending start quietly. */
   stop(): void;
   /** Pause or resume; returns the new paused state. Before start() (or after stop()) it does nothing and returns false. */
   togglePause(): boolean;
   /**
    * Switch models while running, without asking for the microphone again: the new model takes over once it runs; if
-   * it cannot, the old one keeps running and the error is reported. Before start(), it selects and preloads.
+   * it cannot, the old one keeps running and the error is reported. The old engine continues through the new one's
+   * first frame; timestamps stay on the unpaused session clock. Before start(), it selects and preloads.
    * Resolves the model running afterwards: `id` on success, the old model if the switch failed (with onError), null
    * if nothing runs (not started, or stopped meanwhile). Without onError, a failure rejects instead.
    */
@@ -205,7 +206,8 @@ export interface Detector {
   readonly paused: boolean;
   /**
    * A session is started: the engine is installed. Outside a click or key handler the audio context can still be
-   * suspended, and frames then wait until it resumes (on the next click or key press).
+   * suspended, and frames then wait until it resumes (on the next click or key press). Interruptions attempt resume
+   * and fall back to the next gesture. An ended microphone or externally closed context stops the session.
    */
   readonly running: boolean;
   /** The selected model. */
@@ -218,7 +220,7 @@ export type ErrorCode =
   | 'unknown-model' | 'bad-options' | 'bad-threshold' | 'bad-input' | 'bad-source'
   | 'unknown-kernel' | 'kernel-unsupported' | 'kernel-load-failed'
   | 'no-web-audio' | 'insecure-context' | 'no-microphone-api' | 'worklet-unsupported' | 'worklet-load-failed'
-  | 'mic-denied' | 'mic-not-found' | 'mic-busy' | 'mic-failed'
+  | 'mic-denied' | 'mic-not-found' | 'mic-busy' | 'mic-failed' | 'mic-ended'
   | 'model-load-failed' | 'processor-error' | 'internal-error';
 
 export class PitchPleaseError extends Error {

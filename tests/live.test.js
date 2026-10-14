@@ -24,6 +24,110 @@ beforeEach(() => { env = installBrowser(); });
 afterEach(() => env.restore());
 
 describe('trained models in the (scripted) AudioWorklet', () => {
+  test('continuous session time: trained swaps keep both clocks increasing within two hops, excluding pauses', async () => {
+    const frames = [];
+    const d = P.create({ onNotes: (n, f) => frames.push(f) });
+    await d.start();
+    env.ctx.render(CHORD.subarray(0, 12000));
+    await settle();
+    const hop = 256 / 22050;
+    for (const model of ['piano', 'voice', 'fast']) {
+      const before = frames.at(-1), count = frames.length;
+      if (model === 'voice') await d.setModel('fast'); // supersede a warming candidate without losing old output
+      await d.setModel(model);
+      // Batch rendering deliberately delays main-thread messages: offsets cannot use delivery time.
+      env.ctx.render(CHORD.subarray(0, 6000));
+      await settle();
+      const first = frames[count];
+      expect(first.time).toBeGreaterThan(before.time);
+      expect(first.emitTime).toBeGreaterThan(before.emitTime);
+      for (let i = count; i < frames.length; i++) {
+        expect(frames[i].time - frames[i - 1].time).toBeGreaterThan(0);
+        expect(frames[i].time - frames[i - 1].time).toBeLessThanOrEqual(2 * hop + 1e-9);
+        expect(frames[i].emitTime - frames[i - 1].emitTime).toBeGreaterThan(0);
+        expect(frames[i].emitTime - frames[i - 1].emitTime).toBeLessThanOrEqual(2 * hop + 1e-9);
+      }
+    }
+    const beforePause = frames.at(-1), count = frames.length;
+    d.togglePause();
+    await settle();
+    env.ctx.render(new Float32Array(48000 * 4));
+    await d.setModel('piano'); // swap while paused, before the new node's first quantum
+    await settle();
+    expect(frames.length).toBe(count);
+    d.togglePause();
+    await settle();
+    env.ctx.render(CHORD.subarray(0, 6000));
+    await settle();
+    expect(frames[count].time - beforePause.time).toBeGreaterThan(0);
+    expect(frames[count].time - beforePause.time).toBeLessThanOrEqual(2 * hop + 1e-9);
+    expect(frames.at(-1).emitTime - beforePause.emitTime).toBeCloseTo(0.125, 1);
+    d.stop();
+  }, 60_000);
+
+  test('continuous session time: a newer port cannot choose the origin before the original frame arrives', async () => {
+    const frames = [];
+    const d = P.create({ onNotes: (n, f) => frames.push(f) });
+    await d.start();
+    env.ctx.render(new Float32Array(512)); // original input began, but it has not emitted yet
+    await settle();
+    await d.setModel('piano');
+    const nodes = env.state.nodes, handlers = nodes.map(n => n.port.onmessage), queued = nodes.map(() => []);
+    nodes.forEach((n, i) => { n.port.onmessage = e => queued[i].push(e); });
+    env.ctx.render(new Float32Array(6000));
+    await settle();
+    const nextFrames = queued[1].filter(e => e.data.type === 'frame');
+    handlers[1](nextFrames[0]); // force the newer port to win the race
+    for (const e of queued[0]) handlers[0]?.(e);
+    for (const e of queued[1]) if (e !== nextFrames[0]) handlers[1](e);
+    expect(frames[0].time).toBeGreaterThanOrEqual(0);
+    expect(frames.at(-1).emitTime).toBeCloseTo(nextFrames.at(-1).data.startedAt + nextFrames.at(-1).data.emit, 9);
+    for (let i = 1; i < frames.length; i++) {
+      expect(frames[i].time).toBeGreaterThan(frames[i - 1].time);
+      expect(frames[i].emitTime).toBeGreaterThan(frames[i - 1].emitTime);
+    }
+    d.stop();
+  }, 60_000);
+
+  test('continuous session time: stats describe the engine producing warm-up frames', async () => {
+    const updates = [];
+    const d = P.create({ onUpdate: data => updates.push([data.model, d.stats.model]) });
+    await d.start();
+    env.ctx.render(new Float32Array(4800));
+    await settle();
+    await d.setModel('piano');
+    expect(d.stats.model).toBe('fast'); // ready, but no new audio has been processed yet
+    env.ctx.render(new Float32Array(4800));
+    await settle();
+    expect(d.stats.model).toBe('piano');
+    expect(updates.some(([model]) => model === 'fast')).toBe(true);
+    expect(updates.some(([model]) => model === 'piano')).toBe(true);
+    expect(updates.every(([model, stats]) => model === stats)).toBe(true);
+    d.stop();
+  });
+
+  test('continuous session time: FFT swaps retain session clocks and restart resets them', async () => {
+    const frames = [];
+    const d = P.create({ model: 'fft', onNotes: (n, f) => frames.push(f) });
+    await d.start();
+    env.tick(1000);
+    const before = frames.at(-1), count = frames.length;
+    await d.setModel('fast');
+    env.ctx.render(CHORD.subarray(0, 6000));
+    await settle();
+    expect(frames[count].time).toBeGreaterThan(before.time);
+    expect(frames[count].emitTime).toBeGreaterThan(before.emitTime);
+    const trained = frames.at(-1);
+    await d.setModel('fft');
+    env.tick(env.state.clock + 16);
+    expect(frames.at(-1).time).toBeGreaterThan(trained.time);
+    expect(frames.at(-1).emitTime).toBeGreaterThan(trained.emitTime);
+    d.stop();
+    await d.start();
+    expect(frames.at(-1).time).toBe(0);
+    d.stop();
+  }, 30_000);
+
   test('live frames decode exactly like analyze() on the same audio', async () => {
     const frames = [];
     const d = P.create({ onNotes: (notes, f) => frames.push(f) });
@@ -77,26 +181,26 @@ describe('trained models in the (scripted) AudioWorklet', () => {
     await d.setModel('piano');
     expect(env.state.micCalls).toBe(1);
     expect(d.model).toBe('piano');
-    expect(d.stats).toMatchObject({ model: 'piano', kernel: KERNEL });
     expect(log.at(-1)).toEqual(['end']); // the held chord ends with its engine
-    expect(env.ctx.sources[0].targets.has(firstNode)).toBe(false); // old node disconnected
     log.length = 0;
     env.ctx.render(CHORD);
     await until(() => log.some((e) => e[0] === 'chord'));
+    expect(env.ctx.sources[0].targets.has(firstNode)).toBe(false); // old node retires after warm-up
+    expect(d.stats).toMatchObject({ model: 'piano', kernel: KERNEL });
     expect(log.find((e) => e[0] === 'chord')[1]).toBe('A');
-    expect(new Set(log.filter((e) => e[0] === 'notes').map((e) => e[1]))).toEqual(new Set(['piano']));
+    expect(log.filter((e) => e[0] === 'notes').at(-1)[1]).toBe('piano');
 
     await d.setModel('fft');
-    expect(d.stats).toMatchObject({ model: 'fft', kernel: null });
     env.tick(1000); env.tick(1016);
+    expect(d.stats).toMatchObject({ model: 'fft', kernel: null });
     expect(env.state.raf.size).toBe(1); // the fft loop keeps scheduling animation frames
 
     await d.setModel('voice');
-    expect(d.stats).toMatchObject({ model: 'voice', kernel: KERNEL });
-    expect(env.state.raf.size).toBe(0); // fft loop stopped
     log.length = 0;
     env.ctx.render(CHORD);
     await until(() => log.some((e) => e[0] === 'chord'));
+    expect(d.stats).toMatchObject({ model: 'voice', kernel: KERNEL });
+    expect(env.state.raf.size).toBe(0); // fft retires when the trained engine first emits
     expect(log.find((e) => e[0] === 'chord')[1]).toBe('A');
     expect(env.state.micCalls).toBe(1);
 

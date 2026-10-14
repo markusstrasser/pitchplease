@@ -889,7 +889,7 @@ const { createResampler } = __m4_resample_js;
 // bundles this file and its imports into that one self-contained script; edit here, then `npm run build`).
 //
 // processorOptions: { manifest, weights: ArrayBuffer, impl: 'js' | 'wasm', wasmBytes?: ArrayBuffer }
-// Posts { type: 'ready' } once the detector is built, { type: 'frame', t, emit, probs } per detector frame,
+// Posts { type: 'ready' } once the detector is built, { type: 'frame', t, emit, startedAt, probs } per detector frame,
 // { type: 'stats', cpuLoad, framesPerSecond } every ~0.5 s of audio, and { type: 'error', message } if the detector
 // cannot be built or throws.
 // Accepts { type: 'pause', paused } and { type: 'stop' }.
@@ -904,6 +904,7 @@ class PitchPleaseProcessor extends AudioWorkletProcessor {
     super();
     this.alive = true;
     this.paused = false;
+    this.startedAt = null; // AudioContext time at the first input quantum, before detector warm-up
     this.busyMs = 0; this.samples = 0; this.frames = 0;
     this.port.onmessage = (e) => {
       if (e.data.type === 'pause') this.paused = e.data.paused;
@@ -928,6 +929,7 @@ class PitchPleaseProcessor extends AudioWorkletProcessor {
     if (!this.alive) return false;
     const ch = inputs[0] && inputs[0][0];
     if (!ch || this.paused) return true;
+    this.startedAt ??= currentTime;
     const t0 = clock();
     let out;
     try {
@@ -940,7 +942,7 @@ class PitchPleaseProcessor extends AudioWorkletProcessor {
     this.busyMs += clock() - t0;
     for (const f of out) {
       const probs = Float32Array.from(f.probs); // own copy: a WASM kernel's probs may view its memory
-      this.port.postMessage({ type: 'frame', t: f.t, emit: f.emit, probs }, [probs.buffer]);
+      this.port.postMessage({ type: 'frame', t: f.t, emit: f.emit, startedAt: this.startedAt, probs }, [probs.buffer]);
     }
     this.frames += out.length;
     this.samples += ch.length;

@@ -118,9 +118,15 @@ const detector = create({
 | `await start(stream?)` | Opens the microphone (raw: no echo cancellation, noise suppression or gain control) or uses the `MediaStream` you pass (a stream passed while already starting or running is ignored: `stop()` first). Downloads the model while the permission prompt shows. Resolves `true` once detecting, `false` if it failed (with `onError`) or `stop()` cancelled it; a second call while starting or running shares that outcome. |
 | `stop()` | Stops, releases the microphone (a stream you passed is left running) and clears the pause. A `start()` still opening is cancelled quietly. `start()` works again. |
 | `togglePause()` | Pauses or resumes; returns the new paused state. Without a started session it does nothing and returns `false`. |
-| `await setModel(id)` | Swaps models while running: the new model takes over once it reports ready in the audio thread (within 2 s, else the switch fails), then the old one stops; the mic stays open. If the new model fails, the old one keeps running and the error is reported. Resolves the model running afterwards (`id`, the old model after a failure, or `null` when nothing runs). Before `start()`, it selects the model and preloads its weights. |
+| `await setModel(id)` | Swaps models while running: the new model must report ready in the audio thread (within 2 s, else the switch fails); the old one continues until the new one's first frame, then stops. The mic stays open. If the new model fails, the old one keeps running and the error is reported. Resolves the model running afterwards (`id`, the old model after a failure, or `null` when nothing runs). Before `start()`, it selects the model and preloads its weights. |
 | `model`, `running`, `paused` | Current state. `running` means the session started and its engine is installed; if the audio context is still suspended (`start()` ran outside a click or key handler), frames begin when it resumes on the next click or key press. |
-| `stats` | `{ model, kernel, cpuLoad, framesPerSecond, sampleRate }`. `cpuLoad` is detector time / audio time, measured in the audio thread (`fft`: on the main thread). |
+| `stats` | `{ model, kernel, cpuLoad, framesPerSecond, sampleRate }`. Identifies the engine producing frames, including while a replacement warms up. `cpuLoad` is detector time / audio time, measured in the audio thread (`fft`: on the main thread). |
+
+If a microphone audio track ends (unplugged, revoked access, or a supplied stream's track), the detector stops and
+reports `mic-ended`. Reconnect it or allow access, then call `start()` again. A supplied stream stays under your
+control; the detector only stops tracks it opened. If another caller closes the AudioContext, detection stops with
+`processor-error`. A suspended or interrupted context attempts to resume, then waits for the next click or key press
+if necessary; `running` stays true and no error is reported.
 
 **Notes** (`onNotes`) are `{ midi, name, pitchClass, prob }`, lowest first: `{ midi: 61, name: 'C#4', pitchClass: 1,
 prob: 0.93 }`. `prob` is the model's probability for that key; for `fft` it is the harmonic score (0.5–1].
@@ -129,8 +135,7 @@ prob: 0.93 }`. `prob` is the model's probability for that key; for `fft` it is t
 
 ```js
 {
-  time,          // analyze(): seconds into the input; live: seconds this engine has analysed (pauses left out,
-                 // starts again near 0 when setModel() switches)
+  time,          // analyze(): seconds into the input; live: unpaused session time since start(), across setModel()
   emitTime,      // when the frame became available; emitTime - time = the detector's own latency
   probs,         // Float32Array(88): every key's probability, A0 (index 0) to C8 (index 87); null for 'fft'
   notes,         // the keys that are on
@@ -139,6 +144,10 @@ prob: 0.93 }`. `prob` is the model's probability for that key; for `fft` it is t
   chord,         // the held chord or null
 }
 ```
+
+Live timestamps keep increasing when models change, while preserving each detector's latency. Switching trained
+models keeps the frame gap within two detector hops during continuous audio. Switching to or from `fft` can have a
+larger gap because its latency and animation-frame cadence differ. A new `start()` after `stop()` begins a new clock.
 
 **Chords** are `{ root: 'C', rootPc: 0, name: 'Maj7', abbrev: 'maj7', full: 'Cmaj7' }`, matched exactly against 22
 templates: triads (major, minor, dim, aug, sus4, sus2), sevenths (maj7, 7, m7, m(maj7), dim7, ø7, aug7), sixths (6,
@@ -173,12 +182,13 @@ Errors are `PitchPleaseError`s with a stable `code` and a message that says what
 | code | when |
 |---|---|
 | `mic-denied`, `mic-not-found`, `mic-busy`, `mic-failed` | the microphone could not be opened |
+| `mic-ended` | a microphone audio track ended; the detector stops (reconnect or allow access, then call `start()` again) |
 | `insecure-context` | the page is not on https:// or localhost |
 | `no-microphone-api` | the browser has no `getUserMedia` (pass a `MediaStream` to `start(stream)`) |
 | `worklet-unsupported` | no AudioWorklet in this browser (use `model: 'fft'`) |
 | `model-load-failed` | the weights could not be fetched (check that `models/` is served, or set `modelBaseUrl`) |
 | `worklet-load-failed` | `engine/worklet.js` could not be loaded |
-| `processor-error` | the detector could not be built, or stopped, in the audio thread; the detector stops (call `start()` again) |
+| `processor-error` | the detector could not be built, stopped in the audio thread, or its AudioContext was closed; the detector stops (call `start()` again) |
 | `no-web-audio` | `start()` outside a browser (use `analyze()`) |
 | `unknown-model`, `bad-threshold`, `bad-options`, `bad-input`, `bad-source`, `unknown-kernel`, `kernel-unsupported`, `kernel-load-failed` | invalid arguments or kernel problems |
 | `internal-error` | anything unexpected; the original error is `err.cause` |

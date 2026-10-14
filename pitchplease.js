@@ -291,41 +291,57 @@ export function create(options = {}) {
   const report = (e) => (onError ? call(onError, e) : console.error(e));
 
   function deliver(eng, frame, event, data) {
-    if (eng !== session?.engine || paused) return;
+    const s = session;
+    if (!s || (eng !== s.engine && eng !== s.retiring) || paused) return;
+    if (eng === s.engine && eng.model === 'fft') retire(s);
+    // During warm-up the old engine still emits. Drop overlap without altering detector latency.
+    if (s.lastFrame && eng !== s.lastEngine && (frame.time <= s.lastFrame.time || frame.emitTime <= s.lastFrame.emitTime)) return;
+    s.lastFrame = frame;
+    s.lastEngine = eng;
     call(onNotes, frame.notes, frame);
-    if (eng !== session?.engine) return; // onNotes stopped or switched the detector
+    if (session !== s || (eng !== s.engine && eng !== s.retiring)) return; // onNotes stopped or switched
     if (event === 'chord') { heldChord = frame.chord; call(onChord, frame.chord); }
     else if (event === 'clear') { heldChord = null; call(onChordEnd); }
-    if (onUpdate && eng === session?.engine) call(onUpdate, data());
+    if (onUpdate && session === s && (eng === s.engine || eng === s.retiring)) call(onUpdate, data());
   }
 
   // The running engine died in the audio thread: stop, and say why. A replaced engine's death is not reported.
   function engineFailed(eng, e) {
+    if (eng === session?.retiring) { retire(session); return; }
     if (eng !== session?.engine) return;
     teardown();
     report(e);
   }
 
+  function retire(s) {
+    s.retiring?.stop();
+    s.retiring = null;
+    s.engine?.flush?.();
+  }
+
+  // AudioContext time freezes during suspension; explicit pauses are removed separately. Record intervals so a
+  // delayed first-frame message can still map its first processed quantum to the right unpaused session time.
+  function sessionTime(s, at) {
+    s.origin ??= at;
+    let elapsed = at - s.origin;
+    for (const [start, end] of s.pauses) elapsed -= Math.max(0, Math.min(at, end ?? at) - Math.max(start, s.origin));
+    return elapsed;
+  }
+
   function fftEngine(s) {
     const eng = { model: 'fft', kernel: null };
-    // frame.time counts unpaused time since begin(), as a worklet engine's audio clock does
-    let t0 = 0, pausedAt = null, pausedMs = 0;
+    // Every engine uses the same unpaused session clock, including switches to and from FFT.
     const live = startFftEngine({
       ctx: s.ctx, source: s.source, config: fftConfig(options),
-      onStep: (r, t) => {
-        const frame = fftFrame(r, (t - t0 - pausedMs) / 1000);
+      onStep: (r) => {
+        const frame = fftFrame(r, sessionTime(s, s.ctx.currentTime));
         deliver(eng, frame, r.event, () => Object.assign(r.data, { notes: frame.notes, probs: null, model: 'fft' }));
       },
     });
     return Object.assign(eng, {
       stats: live.stats,
-      begin() { t0 = performance.now(); live.begin(); },
-      setPaused(p) {
-        const t = performance.now();
-        if (p && pausedAt === null) pausedAt = t;
-        else if (!p && pausedAt !== null) { pausedMs += t - pausedAt; pausedAt = null; }
-        live.setPaused(p);
-      },
+      begin() { sessionTime(s, s.ctx.currentTime); live.begin(); },
+      setPaused: live.setPaused,
       stop: live.stop,
     });
   }
@@ -338,7 +354,22 @@ export function create(options = {}) {
       channelCount: 1, channelCountMode: 'explicit', channelInterpretation: 'speakers',
       processorOptions: { manifest, weights, impl: kernel.choice.impl, wasmBytes: kernel.wasm },
     });
-    const eng = { model: m.id, kernel: kernel.choice.id, stats: { cpuLoad: 0, framesPerSecond: 0 }, installed: false };
+    const eng = { model: m.id, kernel: kernel.choice.id, stats: { cpuLoad: 0, framesPerSecond: 0 }, installed: false,
+      pending: [], firstEmit: null };
+    let offset = null;
+    eng.prepare = (msg) => {
+      offset ??= sessionTime(s, msg.startedAt);
+      eng.firstEmit ??= offset + msg.emit;
+    };
+    const accept = (msg) => {
+      if (session !== s || (eng !== s.engine && eng !== s.retiring) || paused) return;
+      eng.prepare(msg);
+      const time = offset + msg.t, emitTime = offset + msg.emit;
+      if (s.lastFrame && (time <= s.lastFrame.time || emitTime <= s.lastFrame.emitTime)) return;
+      const [frame, event] = modelFrame(tracker, time, emitTime, msg.probs);
+      deliver(eng, frame, event, () => modelUpdateData(frame, m.id, threshold));
+    };
+    eng.flush = () => { for (const msg of eng.pending.splice(0)) accept(msg); };
     let settle;
     eng.ready = new Promise((r) => { settle = r; });
     const died = (message) => {
@@ -348,9 +379,23 @@ export function create(options = {}) {
     node.port.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'frame') {
-        if (eng !== session?.engine || paused) return;
-        const [frame, event] = modelFrame(tracker, msg.t, msg.emit, msg.probs);
-        deliver(eng, frame, event, () => modelUpdateData(frame, m.id, threshold));
+        if (session !== s) return;
+        if ((eng !== s.engine && eng !== s.retiring) || paused) return;
+        // Until the original engine reports its first quantum, a newer port cannot choose the session origin.
+        if (s.origin === null && eng === s.engine && s.retiring) { eng.pending.push(msg); return; }
+        eng.prepare(eng.pending[0] ?? msg);
+        if (eng === s.engine && s.retiring) {
+          eng.pending.push(msg);
+          // Ports can be delivered in either order. Drain old frames through the new one's first availability,
+          // rather than dropping old warm-up frames that are still queued on its independent MessagePort.
+          if (s.retiring.model === 'fft' || s.lastFrame?.emitTime >= eng.firstEmit) retire(s);
+        } else {
+          accept(msg);
+          if (session === s && eng === s.retiring && s.engine.pending.length) {
+            s.engine.prepare(s.engine.pending[0]);
+            if (s.lastFrame?.emitTime >= s.engine.firstEmit) retire(s);
+          }
+        }
       } else if (msg.type === 'ready') {
         if (msg.version !== version) {
           const error = new PitchPleaseError('worklet-load-failed',
@@ -372,6 +417,7 @@ export function create(options = {}) {
       begin() {},
       setPaused(p) { node.port.postMessage({ type: 'pause', paused: p }); },
       stop() {
+        eng.pending.length = 0;
         try { s.source?.disconnect(node); } catch {}
         try { node.disconnect(); } catch {}
         node.port.postMessage({ type: 'stop' });
@@ -423,13 +469,17 @@ export function create(options = {}) {
 
   function release(s) {
     s.running = false;
+    s.unwatch?.();
+    s.unwatch = null;
     s.engine?.stop();
+    s.retiring?.stop();
+    s.retiring = null;
     s.engine = null;
     s.unwake?.();
     s.unwake = null;
     try { s.source?.disconnect(); } catch {}
     if (s.ownStream) s.stream?.getTracks().forEach((t) => t.stop());
-    s.ctx?.close().catch(() => {});
+    if (s.ctx && s.ctx.state !== 'closed') s.ctx.close().catch(() => {});
     s.ctx = s.source = s.stream = null;
     s.ownStream = false;
   }
@@ -457,11 +507,50 @@ export function create(options = {}) {
 
   // A context still suspended (start() ran outside a click or key handler) resumes on the next click or key press.
   function wakeOnGesture(s) {
-    if (typeof globalThis.addEventListener !== 'function') return;
+    if (s.unwake || typeof globalThis.addEventListener !== 'function') return;
     const ctx = s.ctx;
-    const wake = () => { if (ctx.state === 'suspended') ctx.resume().catch(() => {}); };
+    const wake = () => {
+      if (session === s && !paused && (ctx.state === 'suspended' || ctx.state === 'interrupted')) recoverContext(s);
+    };
     for (const ev of ['pointerdown', 'keydown']) globalThis.addEventListener(ev, wake, true);
     s.unwake = () => { for (const ev of ['pointerdown', 'keydown']) globalThis.removeEventListener(ev, wake, true); };
+  }
+
+  function recoverContext(s) {
+    const ctx = s.ctx;
+    // A hung resume must not consume the next gesture; each gesture gets another attempt.
+    within(ctx.resume().catch(() => {}), RESUME_WAIT_MS).then(() => {
+      if (session !== s || s.ctx !== ctx) return;
+      if (ctx.state === 'running') { s.unwake?.(); s.unwake = null; }
+      else if (ctx.state !== 'closed' && !paused) wakeOnGesture(s);
+    });
+  }
+
+  function watchSession(s) {
+    const ctx = s.ctx, tracks = Array.from(s.stream.getAudioTracks());
+    const ended = () => {
+      if (session !== s) return;
+      teardown();
+      report(new PitchPleaseError('mic-ended', 'The microphone audio track ended. Reconnect it or allow microphone access, then call start() again.'));
+    };
+    const changed = () => {
+      if (session !== s) return;
+      if (ctx.state === 'closed') {
+        teardown();
+        report(new PitchPleaseError('processor-error', 'The AudioContext was closed. Call start() again to restart detection.'));
+      } else if (ctx.state === 'running') {
+        s.unwake?.(); s.unwake = null;
+      } else if (!paused && (ctx.state === 'suspended' || ctx.state === 'interrupted')) recoverContext(s);
+    };
+    // Structural streams from another realm may supply bare track objects; real tracks support these events.
+    for (const track of tracks) track.addEventListener?.('ended', ended);
+    ctx.addEventListener('statechange', changed);
+    s.unwatch = () => {
+      for (const track of tracks) track.removeEventListener?.('ended', ended);
+      ctx.removeEventListener('statechange', changed);
+    };
+    if (tracks.some((track) => track.readyState === 'ended')) ended();
+    else changed();
   }
 
   async function open(s, input) {
@@ -479,9 +568,10 @@ export function create(options = {}) {
     s.ownStream = input == null;
     if (session !== s) { release(s); return false; }
     s.source = connectSource(s, AC);
+    watchSession(s);
     await within(resumed, RESUME_WAIT_MS);
     if (session !== s) return false;
-    if (s.ctx.state === 'suspended') wakeOnGesture(s);
+    if (s.ctx.state === 'suspended' || s.ctx.state === 'interrupted') wakeOnGesture(s);
     const eng = await buildEngine(s, model, () => session !== s);
     if (eng) install(s, eng);
     return s.running; // false if a callback stopped it during install
@@ -489,7 +579,8 @@ export function create(options = {}) {
 
   function start(input) {
     if (session) return session.started; // running, or starting: share that outcome
-    const s = { ctx: null, source: null, stream: null, ownStream: false, engine: null, running: false, unwake: null, started: null };
+    const s = { ctx: null, source: null, stream: null, ownStream: false, engine: null, retiring: null,
+      running: false, unwake: null, unwatch: null, started: null, origin: null, pauses: [], lastFrame: null, lastEngine: null };
     session = s;
     s.started = open(s, input).catch((e) => {
       if (session !== s) return false; // stop() cancelled this start: nothing to report
@@ -507,7 +598,13 @@ export function create(options = {}) {
   function togglePause() {
     if (!session) return false; // nothing to pause before start(); stop() clears pause, so paused is false here
     paused = !paused;
+    if (paused) session.pauses.push([session.ctx?.currentTime ?? 0, null]);
+    else {
+      session.pauses.at(-1)[1] = session.ctx?.currentTime ?? 0;
+      if (session.ctx && session.ctx.state !== 'running' && session.ctx.state !== 'closed') recoverContext(session);
+    }
     session?.engine?.setPaused(paused);
+    session?.retiring?.setPaused(paused);
     return paused;
   }
 
@@ -541,9 +638,10 @@ export function create(options = {}) {
       if (!next) return runningModel();
       if (heldChord) { heldChord = null; call(onChordEnd); } // the old engine still runs during this callback
       if (stale()) { next.stop(); return runningModel(); }
-      const old = s.engine;
+      const old = s.retiring ?? s.engine;
+      if (s.retiring) s.engine.stop(); // supersede the warming candidate, preserve the engine still delivering
+      s.retiring = old;
       install(s, next); // the new engine is ready: it takes over, and the old one retires
-      old.stop();
       return runningModel();
     } catch (e) {
       if (swap === swaps) model = session === s && s.engine ? s.engine.model : prev;
@@ -558,7 +656,7 @@ export function create(options = {}) {
     get running() { return session?.running === true; },
     get model() { return model; },
     get stats() {
-      const eng = session?.engine;
+      const eng = session?.lastEngine ?? session?.engine;
       return {
         model: eng?.model ?? model, kernel: eng?.kernel ?? null,
         cpuLoad: eng?.stats.cpuLoad ?? 0, framesPerSecond: eng?.stats.framesPerSecond ?? 0,

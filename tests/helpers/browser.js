@@ -4,7 +4,7 @@
 // ctx.render(samples) feeds it audio one render quantum at a time.
 const GLOBALS = ['window', 'navigator', 'performance', 'requestAnimationFrame', 'cancelAnimationFrame', 'AudioContext',
   'AudioWorkletNode', 'AudioWorkletProcessor', 'registerProcessor', 'sampleRate', 'MediaStream', 'isSecureContext',
-  'addEventListener', 'removeEventListener'];
+  'addEventListener', 'removeEventListener', 'currentTime'];
 
 const processors = new Map(); // name -> class, filled when engine/worklet.js is evaluated
 let pendingPort = null;
@@ -27,8 +27,14 @@ export function installBrowser({ sampleRate = 48000, micError = null, worklet = 
   const micErrors = Array.isArray(micError) ? [...micError] : null;
   const wait = (ms) => (ms === Infinity ? new Promise(() => {}) : ms > 0 ? new Promise((r) => setTimeout(r, ms)) : null);
 
+  class MediaStreamTrack extends EventTarget {
+    constructor() { super(); this.kind = 'audio'; this.readyState = 'live'; }
+    stop() { state.stoppedTracks++; this.readyState = 'ended'; } // stop() does not fire ended in browsers
+    end() { this.readyState = 'ended'; this.dispatchEvent(new Event('ended')); }
+  }
+
   class MediaStream {
-    constructor({ audio = true } = {}) { this.tracks = audio ? [{ kind: 'audio', stop: () => { state.stoppedTracks++; } }] : []; }
+    constructor({ audio = true } = {}) { this.tracks = audio ? [new MediaStreamTrack()] : []; }
     getTracks() { return this.tracks; }
     getAudioTracks() { return this.tracks.filter((t) => t.kind === 'audio'); }
   }
@@ -39,12 +45,17 @@ export function installBrowser({ sampleRate = 48000, micError = null, worklet = 
     disconnect(n) { if (n) { if (!this.targets.delete(n)) throw new Error('not connected'); } else this.targets.clear(); }
   }
 
-  class AudioContext {
+  class AudioContext extends EventTarget {
     constructor(opts = {}) {
+      super();
       if (ctxError) throw new Error(ctxError);
       this.sampleRate = opts.sampleRate ?? deviceRate ?? sampleRate;
       this.renderSize = opts.renderSizeHint === 512 ? 512 : 128;
       this.state = startSuspended ? 'suspended' : 'running';
+      this.currentTime = 0;
+      this.resumeCalls = 0;
+      this.resumeError = null;
+      this.resumeStaysSuspended = false;
       this.destination = new AudioNode(this);
       this.sources = [];
       this.audioWorklet = { addModule: (url) => loadWorklet(url) };
@@ -52,19 +63,27 @@ export function installBrowser({ sampleRate = 48000, micError = null, worklet = 
       state.contexts.push(this);
     }
     resume() {
+      this.resumeCalls++;
       if (this.state === 'closed') return Promise.reject(new Error('InvalidStateError: context is closed'));
+      if (this.resumeError) return Promise.reject(this.resumeError);
+      if (this.resumeStaysSuspended) return Promise.resolve();
       const delay = wait(resumeDelayMs);
-      if (!delay) { this.state = 'running'; return Promise.resolve(); }
+      if (!delay) { this.setState('running'); return Promise.resolve(); }
       return new Promise((resolve, reject) => {
         this.pendingResumes.push(reject);
-        delay.then(() => { if (this.state !== 'closed') { this.state = 'running'; resolve(); } });
+        delay.then(() => { if (this.state !== 'closed') { this.setState('running'); resolve(); } });
       });
     }
     close() {
       if (this.state === 'closed') return Promise.reject(new Error('InvalidStateError: already closed'));
-      this.state = 'closed'; state.closed++;
+      this.setState('closed'); state.closed++;
       for (const reject of this.pendingResumes.splice(0)) reject(new Error('Audio context is going away'));
       return Promise.resolve();
+    }
+    setState(next) {
+      if (this.state === next) return;
+      this.state = next;
+      this.dispatchEvent(new Event('statechange'));
     }
     createMediaStreamSource(stream) {
       if (deviceRate && this.sampleRate !== deviceRate) { const e = new Error('sample rates differ'); e.name = 'NotSupportedError'; throw e; }
@@ -79,10 +98,14 @@ export function installBrowser({ sampleRate = 48000, micError = null, worklet = 
     }
     // Feed audio through every source's connected worklet nodes, one render quantum at a time.
     render(samples) {
+      if (this.state !== 'running') return;
       const q = this.renderSize, out = [[new Float32Array(q)]];
       for (let i = 0; i + q <= samples.length; i += q) {
         const input = [[samples.subarray(i, i + q)]];
+        globalThis.currentTime = this.currentTime;
         for (const s of this.sources) for (const n of s.targets) if (n.processor && n.alive) n.alive = n.processor.process(input, out) !== false;
+        this.currentTime += q / this.sampleRate;
+        state.clock += q / this.sampleRate * 1000;
       }
     }
   }
@@ -149,6 +172,8 @@ export function installBrowser({ sampleRate = 48000, micError = null, worklet = 
     state, MediaStream,
     /** Run every pending animation frame once, at clock ms. */
     tick(ms) {
+      const elapsed = Math.max(0, ms - state.clock) / 1000;
+      for (const ctx of state.contexts) if (ctx.state === 'running') ctx.currentTime += elapsed;
       state.clock = ms;
       const cbs = [...state.raf.values()];
       state.raf.clear();

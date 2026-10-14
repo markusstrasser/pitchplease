@@ -259,6 +259,130 @@ describe('setModel() racing start() and itself', () => {
 });
 
 describe('browser quirks', () => {
+  for (const model of ['fast', 'fft']) {
+    for (const supplied of [false, true]) {
+      test(`lifecycle: ended ${supplied ? 'caller' : 'owned'} microphone tears down ${model} once and permits restart`, async () => {
+        const errors = [];
+        const d = P.create({ model, onError: (e) => errors.push(e) });
+        await d.start(supplied ? new env.MediaStream() : undefined);
+        const ctx = env.ctx, source = ctx.sources[0], track = source.stream.getAudioTracks()[0];
+        d.togglePause();
+        track.end();
+        track.dispatchEvent(new Event('ended')); // repeated events must not report again
+        expect(d.running).toBe(false);
+        expect(d.paused).toBe(false);
+        expect(source.targets.size).toBe(0);
+        expect(ctx.state).toBe('closed');
+        expect(env.state.stoppedTracks).toBe(supplied ? 0 : 1);
+        expect(errors.map((e) => e.code)).toEqual(['mic-ended']);
+        expect(errors[0]).toBeInstanceOf(P.PitchPleaseError);
+        expect(errors[0].message).toMatch(/microphone.*ended.*start\(\).*again/i);
+        expect(await d.start()).toBe(true);
+        track.dispatchEvent(new Event('ended')); // the retired track cannot stop the new session
+        expect(d.running).toBe(true);
+        expect(errors.length).toBe(1);
+        d.stop();
+      });
+    }
+  }
+
+  for (const state of ['interrupted', 'suspended']) {
+    test(`lifecycle: ${state} attempts resume; rejection recovers on the next gesture without an error`, async () => {
+      const errors = [];
+      const d = P.create({ onError: (e) => errors.push(e) });
+      await d.start();
+      const ctx = env.ctx, calls = ctx.resumeCalls;
+      ctx.resumeError = new Error('a gesture is required');
+      ctx.setState(state);
+      await settle();
+      expect(ctx.resumeCalls).toBe(calls + 1);
+      expect(d.running).toBe(true);
+      expect(env.state.listeners.get('pointerdown')?.size).toBe(1);
+      ctx.resumeError = null;
+      env.dispatch('pointerdown');
+      await settle();
+      expect(ctx.state).toBe('running');
+      expect(errors).toEqual([]);
+      expect(env.state.listeners.get('pointerdown').size).toBe(0);
+      d.stop();
+    });
+  }
+
+  test('lifecycle: a fulfilled resume that leaves the context interrupted also arms gestures', async () => {
+    const errors = [];
+    const d = P.create({ onError: (e) => errors.push(e) });
+    await d.start();
+    env.ctx.resumeStaysSuspended = true;
+    env.ctx.setState('interrupted');
+    await settle();
+    expect(env.state.listeners.get('keydown')?.size).toBe(1);
+    env.ctx.resumeStaysSuspended = false;
+    env.dispatch('keydown');
+    await settle();
+    expect(env.ctx.state).toBe('running');
+    expect(errors).toEqual([]);
+    d.stop();
+  });
+
+  test('lifecycle: external context closure stops and reports once; our stop is quiet', async () => {
+    const errors = [];
+    const d = P.create({ onError: (e) => errors.push(e) });
+    await d.start();
+    const ctx = env.ctx;
+    await ctx.close();
+    ctx.dispatchEvent(new Event('statechange'));
+    expect(d.running).toBe(false);
+    expect(ctx.sources[0].targets.size).toBe(0);
+    expect(env.state.stoppedTracks).toBe(1);
+    expect(errors.map((e) => e.code)).toEqual(['processor-error']);
+    expect(errors[0].message).toMatch(/AudioContext.*closed/);
+    await d.start();
+    d.stop();
+    expect(errors.length).toBe(1);
+  });
+
+  test('lifecycle: suspension resumes automatically, but a paused detector waits until unpaused', async () => {
+    const errors = [];
+    const d = P.create({ onError: (e) => errors.push(e) });
+    await d.start();
+    env.ctx.setState('suspended');
+    await settle();
+    expect(env.ctx.state).toBe('running');
+    d.togglePause();
+    const calls = env.ctx.resumeCalls;
+    env.ctx.setState('interrupted');
+    await settle();
+    expect(env.ctx.resumeCalls).toBe(calls);
+    d.togglePause();
+    await settle();
+    expect(env.ctx.state).toBe('running');
+    expect(errors).toEqual([]);
+    d.stop();
+  });
+
+  test('lifecycle: a track ending during engine construction cancels start and releases resources', async () => {
+    env.restore(); env = installBrowser({ workletDelayMs: 50 });
+    const errors = [];
+    const d = P.create({ onError: (e) => errors.push(e) });
+    const starting = d.start();
+    await until(() => env.ctx.sources.length > 0);
+    env.ctx.sources[0].stream.getAudioTracks()[0].end();
+    expect(await starting).toBe(false);
+    expect(d.running).toBe(false);
+    expect(errors.map((e) => e.code)).toEqual(['mic-ended']);
+    expectReleased(env);
+  });
+
+  test('lifecycle: an already-ended supplied track cannot start a silent session', async () => {
+    const errors = [];
+    const stream = new env.MediaStream();
+    stream.getAudioTracks()[0].end();
+    const d = P.create({ onError: (e) => errors.push(e) });
+    expect(await d.start(stream)).toBe(false);
+    expect(errors.map((e) => e.code)).toEqual(['mic-ended']);
+    expect(env.state.stoppedTracks).toBe(0);
+  });
+
   test('a microphone that cannot feed a 48 kHz context: the device rate is used and decodes like analyze()', async () => {
     env.restore(); env = installBrowser({ deviceRate: 44100 });
     const x = fixture('chord-a-major');
