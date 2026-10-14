@@ -22,8 +22,10 @@ export const IMPLS = { js: jsKernel /* , wasm: wasmKernel */ };
 // Tiny modules for WebAssembly.validate (synchronous, microseconds).
 // simd128: (func (result v128) i32.const 0 i8x16.splat i8x16.popcnt)
 export const SIMD_PROBE = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11]);
-// relaxed SIMD: (func (result v128) i32.const 1 i8x16.splat i32.const 2 i8x16.splat i8x16.relaxed_swizzle)
-export const RELAXED_SIMD_PROBE = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 15, 1, 13, 0, 65, 1, 253, 15, 65, 2, 253, 15, 253, 128, 2, 11]);
+// relaxed SIMD: (func (result v128) v128.const 0 v128.const 0 v128.const 0 f32x4.relaxed_madd), the instruction the
+// relaxed kernel build uses (Safari has no relaxed SIMD)
+const V128_ZERO = [253, 12, ...new Array(16).fill(0)];
+export const RELAXED_SIMD_PROBE = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 61, 1, 59, 0, ...V128_ZERO, ...V128_ZERO, ...V128_ZERO, 253, 133, 2, 11]);
 
 // Best first. impl: a key of IMPLS; probe: bytes WebAssembly.validate must accept; wasm: the binary's URL (a static
 // `new URL('./…', import.meta.url)` so bundlers emit the file).

@@ -6,6 +6,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import * as P from '../pitchplease.js';
 import { unpackModel, packModel, modelUrl } from '../engine/models.js';
+import { CHOICES, kernelSupported } from '../engine/kernels.js';
 import { MODEL_SOURCES, workletSource } from '../scripts/build.mjs';
 import { readWav } from './helpers/wav.js';
 
@@ -39,10 +40,16 @@ function activeKeys(frames, on, off) {
   });
 }
 
+// Every kernel this runtime supports. The JS kernel must match incport.js bit for bit; a WASM kernel must decode the
+// same keys with probabilities within 2e-4 (its own parity gate against the Python oracle).
+const KERNELS = CHOICES.filter(kernelSupported).map((c) => c.id);
+const TOLERANCE = { js: 0 };
+
 describe('analyze() decodes exactly what incport.js decodes', () => {
-  for (const id of TRAINED) {
+  test('kernels under test', () => expect(KERNELS).toContain('js'));
+  for (const kernel of KERNELS) for (const id of TRAINED) {
     for (const fx of FIXTURES) {
-      test(`${id} on ${fx}`, async () => {
+      test(`${kernel} kernel: ${id} on ${fx}`, async () => {
         const { samples, sampleRate } = readWav(`${ROOT}tests/fixtures/${fx}.wav`);
         expect(sampleRate).toBe(48000);
         const duration = samples.length / sampleRate;
@@ -57,19 +64,21 @@ describe('analyze() decodes exactly what incport.js decodes', () => {
         const { on, off } = P.models.find((m) => m.id === id).threshold;
         const refKeys = activeKeys(ref, on, off);
 
-        const frames = await P.analyze(samples, sampleRate, { model: id });
+        const frames = await P.analyze(samples, sampleRate, { model: id, kernel });
         expect(ref.length).toBeGreaterThan(beforeTail); // the tail matters: without it the last frames are lost
         expect(frames.length).toBe(ref.length);
-        let mismatches = 0, onFrames = 0;
+        const tol = TOLERANCE[kernel] ?? 2e-4;
+        let mismatches = 0, onFrames = 0, maxDp = 0;
         for (let i = 0; i < ref.length; i++) {
           const f = frames[i], r = ref[i];
           if (f.time !== r.t || f.emitTime !== r.emit) mismatches++;
-          for (let k = 0; k < 88; k++) if (f.probs[k] !== r.probs[k]) { mismatches++; break; }
+          for (let k = 0; k < 88; k++) maxDp = Math.max(maxDp, Math.abs(f.probs[k] - r.probs[k]));
           const keys = f.notes.map((n) => n.midi);
           if (keys.join() !== refKeys[i].join()) mismatches++;
           onFrames += keys.length > 0;
         }
         expect(mismatches).toBe(0);
+        expect(maxDp).toBeLessThanOrEqual(tol);
         expect(onFrames).toBeGreaterThan(ref.length / 2); // the fixtures are busy: a silent decode would pass vacuously
         // the frame clock: one frame per 256 samples at 22.05 kHz
         for (let i = 1; i < frames.length; i++) expect(Math.abs(frames[i].time - frames[i - 1].time - 256 / 22050)).toBeLessThan(1e-9);
