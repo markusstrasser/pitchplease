@@ -2,7 +2,7 @@
 // change the sources, then run `npm run build`. One self-contained file, because bundlers copy a worklet as an asset
 // without its imports.
 // ---- errors.js
-const __errors_js = (() => {
+const __m0_errors_js = (() => {
 
 // Every error PitchPlease reports carries a stable `code` so apps can branch on it; `message` says what to do.
 class PitchPleaseError extends Error {
@@ -16,7 +16,7 @@ return { PitchPleaseError };
 })();
 
 // ---- incport.js
-const __incport_js = (() => {
+const __m1_incport_js = (() => {
 
 // Vendored from pitchtest web/incport.js @ fea7a7e. Do not edit here: change it upstream, then node scripts/vendor.mjs incport.js
 // Streaming basic-pitch (fine-tuned head R-T-L2-OW-w10L-s0) — dependency-free JS port of
@@ -397,9 +397,9 @@ return { parseWeights, createResampler, createDetector };
 })();
 
 // ---- kernels.js
-const __kernels_js = (() => {
-const { PitchPleaseError } = __errors_js;
-const jsKernel = __incport_js;
+const __m2_kernels_js = (() => {
+const { PitchPleaseError } = __m0_errors_js;
+const jsKernel = __m1_incport_js;
 // The DSP kernel seam. A kernel is a module with the API of engine/incport.js:
 //
 //   parseWeights(manifest, buffer)                       -> weights
@@ -456,7 +456,7 @@ return { IMPLS, SIMD_PROBE, RELAXED_SIMD_PROBE, CHOICES, kernelSupported, pickKe
 })();
 
 // ---- resample.js
-const __resample_js = (() => {
+const __m3_resample_js = (() => {
 
 // Streaming band-limited resampler for any rate pair: Kaiser-windowed sinc (20 zero crossings each side, beta 8.6,
 // cutoff 0.92 of the lower Nyquist), table-interpolated and normalised to unity DC gain per output sample.
@@ -514,8 +514,8 @@ return { createResampler };
 
 // ---- processor.js
 {
-const { IMPLS } = __kernels_js;
-const { createResampler } = __resample_js;
+const { IMPLS } = __m2_kernels_js;
+const { createResampler } = __m3_resample_js;
 // AudioWorkletProcessor running a trained detector on the input. Source of engine/worklet.js (scripts/build.mjs
 // bundles this file and its imports into that one self-contained script; edit here, then `npm run build`).
 //

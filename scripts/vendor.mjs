@@ -12,12 +12,13 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isMainModule } from './build.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const MANIFEST = join(ROOT, 'engine/vendor.json');
 export const PITCHTEST = join(ROOT, '../pitchtest');
 const HEADER = /^\/\/ Vendored from pitchtest (\S+) @ (\w+)\. [^\n]*\n/;
-const isText = (name) => /\.(js|mjs|json)$/.test(name);
+const isText = (name) => /\.(js|mjs)$/.test(name); // gets a // header line (a JSON file could not take one)
 const sha256 = (b) => createHash('sha256').update(b).digest('hex');
 const git = (...args) => execFileSync('git', ['-C', PITCHTEST, ...args], { encoding: 'utf8' }).trim();
 
@@ -63,8 +64,7 @@ function vendor(names) {
   writeFileSync(MANIFEST, JSON.stringify(manifest, null, 2) + '\n');
 }
 
-const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
-if (isMain) {
+if (isMainModule(import.meta.url)) {
   const args = process.argv.slice(2);
   if (args[0] === '--check') {
     const { problems, upstream } = checkVendored();
