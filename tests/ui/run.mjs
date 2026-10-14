@@ -7,11 +7,14 @@
 // Gates per model (fixed before the first run): the chord the page holds most often is 'A'; the notes shown include
 // A, C# and E; for trained models >= 80% of shown notes are A, C# or E; frames arrive at the model's rate; the mic is
 // requested once in total; the console has no errors.
+// Then, on a fresh page: a denied microphone shows the reason and offers 'Try again', which works; a model whose
+// download fails (the server 404s it) shows the reason, keeps the old model running and selected, and picking it
+// again once the file is back switches over.
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { extname, join, normalize } from 'node:path';
+import { basename, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -26,9 +29,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---- static server for the repo
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.bin': 'application/octet-stream', '.wasm': 'application/wasm' };
+const failFiles = new Set(); // basenames the server answers with 404 (the recovery check)
 const server = createServer((req, res) => {
   const p = normalize(join(ROOT, decodeURIComponent(new URL(req.url, 'http://x').pathname)));
   if (!p.startsWith(ROOT)) return res.writeHead(403).end();
+  if (failFiles.has(basename(p))) return res.writeHead(404).end();
   try { res.writeHead(200, { 'content-type': TYPES[extname(p)] ?? 'application/octet-stream' }).end(readFileSync(p)); } catch { res.writeHead(404).end(); }
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -122,6 +127,47 @@ try {
   results.exceptions = exceptions;
   results.consoleOther = console_.filter((c) => c.level !== 'error' && c.level !== 'debug').slice(0, 10);
   ok &&= results.micRequests === 1 && !results.errorBanner && errors.length === 0 && exceptions.length === 0;
+
+  // ---- recovery: a denied microphone and a failed model download leave the page usable
+  const rec = (results.recovery = {});
+  const consoleMark = console_.length, exceptionMark = exceptions.length;
+  const banner = `document.getElementById('error').classList.contains('show') ? document.getElementById('error').textContent : null`;
+  await send('Page.navigate', { url: `${origin}/index.html?model=fast` });
+  await until(`document.readyState === 'complete' && !!window.pitchplease && !window.pitchplease.running`);
+  await evaluate(`{ const md = navigator.mediaDevices, o = md.getUserMedia; md.getUserMedia = () => { md.getUserMedia = o; return Promise.reject(new DOMException('Permission denied', 'NotAllowedError')); }; }`);
+  await evaluate(`document.getElementById('start').click()`, true);
+  await until(`!!(${banner})`);
+  rec.deniedBanner = await evaluate(banner);
+  rec.retryButton = await evaluate(`document.getElementById('overlay').classList.contains('hidden') ? null : document.getElementById('start').textContent`);
+  await evaluate(`document.getElementById('start').click()`, true);
+  await until(`window.pitchplease.running`, 20000);
+  rec.bannerAfterRetry = await evaluate(banner);
+  failFiles.add('piano.bin');
+  await evaluate(`document.querySelector('[data-model=piano]').click()`, true);
+  await until(`!!(${banner})`, 20000);
+  rec.loadFailBanner = await evaluate(banner);
+  await sleep(1000);
+  rec.afterFailedSwitch = await evaluate(`({ model: window.pitchplease.model, running: window.pitchplease.running, stats: window.pitchplease.stats,
+    selected: document.querySelector('.model[aria-pressed=true]')?.dataset.model, query: location.search })`);
+  failFiles.delete('piano.bin');
+  await evaluate(`document.querySelector('[data-model=piano]').click()`, true);
+  await until(`window.pitchplease.stats.model === 'piano'`, 20000);
+  rec.bannerAfterSwitch = await evaluate(banner);
+  const recConsole = console_.slice(consoleMark).filter((c) => c.level === 'error');
+  rec.unexpectedConsoleErrors = recConsole.filter((c) => !/404/.test(c.text) || !/piano\.bin/.test(c.text));
+  rec.exceptions = exceptions.slice(exceptionMark);
+  const a = rec.afterFailedSwitch;
+  rec.gates = {
+    deniedExplained: /\(mic-denied\)$/.test(rec.deniedBanner ?? ''),
+    retryOffered: rec.retryButton === 'Try again',
+    retryStarts: rec.bannerAfterRetry === null,
+    loadFailureExplained: /\(model-load-failed\)$/.test(rec.loadFailBanner ?? ''),
+    oldModelKeepsRunning: a.running && a.model === 'fast' && a.stats.model === 'fast' && a.stats.framesPerSecond > 80,
+    pickerShowsRunningModel: a.selected === 'fast' && a.query === '?model=fast',
+    switchWorksOnceFileIsBack: rec.bannerAfterSwitch === null,
+    noOtherErrors: rec.unexpectedConsoleErrors.length === 0 && rec.exceptions.length === 0,
+  };
+  ok &&= Object.values(rec.gates).every(Boolean);
 } catch (e) {
   ok = false;
   results.failure = String(e.stack ?? e);
