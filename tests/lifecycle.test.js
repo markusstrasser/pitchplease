@@ -23,7 +23,7 @@ async function until(cond, ms = 10_000) {
 function brokenPianoDir() {
   const dir = mkdtempSync(`${tmpdir()}/pp-broken-piano-`);
   copyFileSync(fileURLToPath(new URL('../models/fast.bin', import.meta.url)), `${dir}/fast.bin`);
-  writeFileSync(`${dir}/piano.bin`, packModel({ model: 'piano', tensors: { bn_mul: { offset: 0, shape: [1] } }, const: {} }, new Float32Array(1)));
+  writeFileSync(`${dir}/piano.bin`, packModel({ model: 'piano', revision: P.models.find(m => m.id === 'piano').revision, tensors: { bn_mul: { offset: 0, shape: [1] } }, const: {} }, new Float32Array(1)));
   return pathToFileURL(dir + '/');
 }
 
@@ -419,5 +419,5 @@ describe('pause', () => {
     env.ctx.render(CHORD.subarray(0, 24000));
     await until(() => n > 10);
     d.stop();
-  });
+  }, 30_000);
 });

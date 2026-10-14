@@ -198,7 +198,7 @@ describe('errors are actionable and coded', () => {
 
   test('a detector that fails inside the worklet reports processor-error', async () => {
     const dir = mkdtempSync(`${tmpdir()}/pp-bad-model-`);
-    writeFileSync(`${dir}/fast.bin`, packModel({ model: 'fast', tensors: { bn_mul: { offset: 0, shape: [1] } }, const: {} }, new Float32Array(1)));
+    writeFileSync(`${dir}/fast.bin`, packModel({ model: 'fast', revision: P.models.find(m => m.id === 'fast').revision, tensors: { bn_mul: { offset: 0, shape: [1] } }, const: {} }, new Float32Array(1)));
     const errors = [];
     const d = P.create({ modelBaseUrl: pathToFileURL(dir + '/'), onError: (e) => errors.push(e) });
     await d.start();

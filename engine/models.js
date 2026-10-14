@@ -1,6 +1,6 @@
 // The model registry: what each model is for, how it scores, where its weights live, and how they load.
 import { PitchPleaseError } from './errors.js';
-import { fetchBytes } from './load.js';
+import { fetchBytes, folderUrl } from './load.js';
 
 // Scores: pitchtest's held-out test sets at each model's operating point. F1 is frame-level note F1; latency is the
 // median delay from a note's onset to its first detected frame, counting missed onsets as infinitely late.
@@ -12,25 +12,25 @@ export const MODELS = Object.freeze([
     id: 'fast', label: 'Fast', default: true,
     useCase: 'The default: chords on laptops and desktops, the lightest trained model. Also the most accurate on unaccompanied singing.',
     sizeKB: 495, relativeCost: 1, latencyMs: 50, pianoF1: 0.679, guitarF1: 0.784, voiceF1: 0.911,
-    threshold: { on: 0.7, off: 0.42 },
+    threshold: { on: 0.7, off: 0.42 }, revision: 'b93e9658481c',
   },
   {
     id: 'piano', label: 'Piano', default: false,
     useCase: 'Most accurate on piano, strong on guitar, weaker on singing. About twice the compute of fast.',
     sizeKB: 545, relativeCost: 2.1, latencyMs: 40, pianoF1: 0.729, guitarF1: 0.818, voiceF1: 0.872,
-    threshold: { on: 0.6, off: 0.36 },
+    threshold: { on: 0.6, off: 0.36 }, revision: '28bf7933b9c5',
   },
   {
     id: 'voice', label: 'Voice', default: false,
     useCase: 'Piano and guitar close to the piano model; sung notes accepted about as well as by fast on vocadito, but parity on new singers is not established (fast is best for unaccompanied singing). Same compute as piano.',
     sizeKB: 545, relativeCost: 2.1, latencyMs: 41, pianoF1: 0.726, guitarF1: 0.821, voiceF1: 0.886,
-    threshold: { on: 0.65, off: 0.39 },
+    threshold: { on: 0.65, off: 0.39 }, revision: 'bb4d3d6a50d4',
   },
   {
     id: 'fft', label: 'FFT (v2)', default: false,
     useCase: "No model download and the lightest CPU: v2's FFT peak picker (as in its final source, not npm 2.0.0). Far less accurate and slower to react.",
     sizeKB: 0, relativeCost: null, latencyMs: 260, pianoF1: 0.375, guitarF1: 0.347, voiceF1: 0.546,
-    threshold: null,
+    threshold: null, revision: null,
   },
 ].map((m) => Object.freeze({ ...m, threshold: m.threshold && Object.freeze(m.threshold) })));
 
@@ -53,22 +53,11 @@ const DEFAULT_URLS = {
  * Where a model's weights are fetched from: `<id>.bin` inside the folder modelBaseUrl names (a query string, such
  * as ?v=3, is kept), or the copy shipped in models/. Throws 'bad-options' for a base that does not resolve here.
  */
-export function modelUrl(id, modelBaseUrl) {
+export function modelUrl(id, modelBaseUrl, assetBaseUrl) {
   if (!DEFAULT_URLS[id]) throw new PitchPleaseError('unknown-model', `Model '${id}' has no weights file.`);
-  if (modelBaseUrl == null) return DEFAULT_URLS[id]();
-  const raw = typeof modelBaseUrl === 'object' && modelBaseUrl.href ? modelBaseUrl.href : String(modelBaseUrl);
-  let base;
-  try {
-    if (!raw.trim()) throw new TypeError('empty');
-    base = new URL(raw, globalThis.location?.href);
-  } catch (e) {
-    throw new PitchPleaseError('bad-options', `modelBaseUrl '${raw}' is not a URL here` + (globalThis.location ? '.' :
-      ': outside a browser it must be absolute, e.g. a file: or https: URL of the folder.'), { cause: e });
-  }
-  if (!base.pathname.endsWith('/')) base.pathname += '/';
-  const url = new URL(`${id}.bin`, base);
-  url.search = base.search;
-  return url;
+  if (modelBaseUrl != null) return folderUrl(`${id}.bin`, modelBaseUrl, 'modelBaseUrl');
+  if (assetBaseUrl != null) return folderUrl(`models/${id}.bin`, assetBaseUrl);
+  return DEFAULT_URLS[id]();
 }
 
 // ---- weights file: "PPW1", u32 LE header length, UTF-8 JSON header, zero padding to 4 bytes, float32 LE tensors.
@@ -109,11 +98,17 @@ export function unpackModel(buffer, expectedId) {
 const cache = new Map(); // url -> Promise<{ header, manifest, weights }>
 
 /** Fetches and unpacks a model's weights once per URL. Rejects with a PitchPleaseError ('model-load-failed'). */
-export function loadModel(id, modelBaseUrl) {
-  const url = modelUrl(id, modelBaseUrl);
+export function loadModel(id, modelBaseUrl, assetBaseUrl) {
+  const url = modelUrl(id, modelBaseUrl, assetBaseUrl);
   const key = url.href;
   if (!cache.has(key)) {
-    const p = fetchBytes(url).then((buffer) => unpackModel(buffer, id)).catch((e) => {
+    const p = fetchBytes(url).then((buffer) => {
+      const loaded = unpackModel(buffer, id);
+      const expected = getModel(id).revision;
+      if (loaded.header.revision !== expected) throw new Error(`the file holds weights revision ${loaded.header.revision}; ` +
+        `this version expects ${expected}. Copy models/ from the same release.`);
+      return loaded;
+    }).catch((e) => {
       cache.delete(key);
       throw new PitchPleaseError('model-load-failed',
         `Could not load the '${id}' model from ${key}: ${e.message}. The package's models/ folder must be served next to engine/; ` +

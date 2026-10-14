@@ -16,6 +16,7 @@ import { fftConfig, startFftEngine, fftNotes, analyzeFftOffline } from './engine
 import { pickKernel } from './engine/kernels.js';
 import { resolveKernel } from './engine/kernel-load.js';
 import { createResampler } from './engine/resample.js';
+import { folderUrl } from './engine/load.js';
 
 export { NOTE_NAMES, midiToNote, pitchClassToColor, matchChord, createChordHold, PitchPleaseError };
 export const version = '3.0.0';
@@ -23,6 +24,7 @@ export const version = '3.0.0';
 export const models = MODELS;
 
 const workletUrl = () => new URL('./engine/worklet.js', import.meta.url);
+const resolvedWorkletUrl = (base) => base == null ? workletUrl() : folderUrl('engine/worklet.js', base);
 const KEY_MIDIS = Float32Array.from({ length: KEY_COUNT }, (_, k) => k + LOWEST_MIDI);
 const NO_PEAKS = new Float32Array(0);
 const ANALYZE_CHUNK = 128; // samples per push, as one Web Audio render quantum
@@ -67,6 +69,7 @@ function checkOptions(o) {
   }
   pickKernel(o.kernel ?? 'auto'); // throws on an unknown kernel
   if (o.modelBaseUrl != null) modelUrl('fast', o.modelBaseUrl); // throws on a URL that cannot be resolved here
+  if (o.assetBaseUrl != null) resolvedWorkletUrl(o.assetBaseUrl);
   return m;
 }
 
@@ -157,7 +160,7 @@ async function analyzeInput(input, sampleRate, options) {
     return analyzeFftOffline(input, sampleRate, { ...options, stabilityFrames: options.stabilityFrames ?? 4 }, fftFrame, pacer());
   }
   const preference = options.kernel ?? 'auto';
-  const [loaded, kernel] = await Promise.all([loadModel(model.id, options.modelBaseUrl), resolveKernel(preference, 'module')]);
+  const [loaded, kernel] = await Promise.all([loadModel(model.id, options.modelBaseUrl, options.assetBaseUrl), resolveKernel(preference, 'module', undefined, options.assetBaseUrl)]);
   try {
     return await decodeOffline(input, sampleRate, options, model, loaded, kernel);
   } catch (e) {
@@ -199,9 +202,9 @@ async function decodeOffline(input, sampleRate, options, model, { manifest, weig
 
 const worklets = new WeakMap(); // AudioContext -> Promise (addModule once per context)
 
-function addWorklet(ctx) {
+function addWorklet(ctx, assetBaseUrl) {
   if (!worklets.has(ctx)) {
-    const url = workletUrl();
+    const url = resolvedWorkletUrl(assetBaseUrl);
     worklets.set(ctx, ctx.audioWorklet.addModule(url).catch((e) => {
       worklets.delete(ctx);
       throw new PitchPleaseError('worklet-load-failed',
@@ -349,7 +352,13 @@ export function create(options = {}) {
         const [frame, event] = modelFrame(tracker, msg.t, msg.emit, msg.probs);
         deliver(eng, frame, event, () => modelUpdateData(frame, m.id, threshold));
       } else if (msg.type === 'ready') {
-        settle(null);
+        if (msg.version !== version) {
+          const error = new PitchPleaseError('worklet-load-failed',
+            `The worklet from ${resolvedWorkletUrl(options.assetBaseUrl).href} reports version ${msg.version}; ` +
+            `pitchplease.js expects ${version}. Copy engine/ and models/ from one release.`);
+          if (eng.installed) engineFailed(eng, error);
+          else settle(error);
+        } else settle(null);
       } else if (msg.type === 'stats') {
         eng.stats.cpuLoad = msg.cpuLoad; eng.stats.framesPerSecond = msg.framesPerSecond;
       } else if (msg.type === 'error') {
@@ -384,7 +393,7 @@ export function create(options = {}) {
     const threshold = resolveThreshold(m, options.threshold);
     const tracker = createTracker(trackerOptions(options, m));
     const preference = options.kernel ?? 'auto';
-    const [loaded, first] = await Promise.all([loadModel(m.id, options.modelBaseUrl), resolveKernel(preference, 'bytes'), addWorklet(s.ctx)]);
+    const [loaded, first] = await Promise.all([loadModel(m.id, options.modelBaseUrl, options.assetBaseUrl), resolveKernel(preference, 'bytes', undefined, options.assetBaseUrl), addWorklet(s.ctx, options.assetBaseUrl)]);
     for (let kernel = first; ;) {
       if (stale()) return null;
       const eng = workletEngine(s, m, kernel, loaded, tracker, threshold);
@@ -392,6 +401,7 @@ export function create(options = {}) {
       if (stale()) { eng.stop(); return null; }
       if (failure === null) return eng;
       eng.stop();
+      if (failure instanceof PitchPleaseError) throw failure;
       if (failure === NOT_READY) {
         throw new PitchPleaseError('processor-error', `The '${m.id}' detector did not report ready within ${READY_WAIT_MS / 1000} s.`);
       }
@@ -463,7 +473,7 @@ export function create(options = {}) {
     // Create the context inside the user gesture (before the permission prompt) so it starts running.
     s.ctx = new AC({ sampleRate: 48000, renderSizeHint: 512 });
     const resumed = s.ctx.resume().catch(() => {});
-    if (model !== 'fft') { loadModel(model, options.modelBaseUrl).catch(() => {}); addWorklet(s.ctx).catch(() => {}); }
+    if (model !== 'fft') { loadModel(model, options.modelBaseUrl, options.assetBaseUrl).catch(() => {}); addWorklet(s.ctx, options.assetBaseUrl).catch(() => {}); }
     const stream = input ?? await openMicrophone();
     s.stream = stream;
     s.ownStream = input == null;
@@ -519,7 +529,7 @@ export function create(options = {}) {
     model = m.id;
     const s = session;
     if (!s) { // not started: select it, and warm the cache for start()
-      if (m.id !== 'fft') loadModel(m.id, options.modelBaseUrl).catch(() => {});
+      if (m.id !== 'fft') loadModel(m.id, options.modelBaseUrl, options.assetBaseUrl).catch(() => {});
       return null;
     }
     const swap = ++swaps;

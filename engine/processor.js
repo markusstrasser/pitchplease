@@ -30,7 +30,7 @@ class PitchPleaseProcessor extends AudioWorkletProcessor {
       const direct = sampleRate === 48000 || sampleRate === 22050;
       this.resampler = direct ? null : createResampler(sampleRate, 22050);
       this.det = kernel.createDetector(kernel.parseWeights(manifest, weights), { inputRate: direct ? sampleRate : 22050, wasmModule: wasmBytes });
-      this.port.postMessage({ type: 'ready' });
+      this.port.postMessage({ type: 'ready', version: '__PITCHPLEASE_VERSION__' });
     } catch (e) {
       this.alive = false;
       this.port.postMessage({ type: 'error', message: String(e && e.message || e) });

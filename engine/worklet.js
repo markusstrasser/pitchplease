@@ -786,6 +786,12 @@ const wasmKernel = __m2_incport_wasm_js;
 
 const IMPLS = { js: jsKernel, wasm: wasmKernel };
 
+// GENERATED from engine/vendor.json by scripts/build.mjs; runtime integrity for fetched kernel bytes.
+const WASM_SHA256 = {
+  'wasm-relaxed': '6ea4b3081e8598aa53585351309ed14320f7b6df5d6dc22c788239fcbd7b778e',
+  'wasm-simd': 'e86fcbff8b20170dffb699fd84590e0fc3431f55bb22da4e003d6c266f2534c7',
+};
+
 // Tiny modules for WebAssembly.validate (synchronous, microseconds).
 // simd128: (func (result v128) i32.const 0 i8x16.splat i8x16.popcnt)
 const SIMD_PROBE = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11]);
@@ -815,7 +821,7 @@ function pickKernel(preference = 'auto', choices = CHOICES) {
   if (!kernelSupported(choice)) throw new PitchPleaseError('kernel-unsupported', `Kernel '${preference}' needs a WebAssembly feature this runtime lacks. Use kernel: 'auto' to fall back.`);
   return choice;
 }
-return { IMPLS, SIMD_PROBE, RELAXED_SIMD_PROBE, CHOICES, kernelSupported, pickKernel };
+return { IMPLS, WASM_SHA256, SIMD_PROBE, RELAXED_SIMD_PROBE, CHOICES, kernelSupported, pickKernel };
 })();
 
 // ---- resample.js
@@ -911,7 +917,7 @@ class PitchPleaseProcessor extends AudioWorkletProcessor {
       const direct = sampleRate === 48000 || sampleRate === 22050;
       this.resampler = direct ? null : createResampler(sampleRate, 22050);
       this.det = kernel.createDetector(kernel.parseWeights(manifest, weights), { inputRate: direct ? sampleRate : 22050, wasmModule: wasmBytes });
-      this.port.postMessage({ type: 'ready' });
+      this.port.postMessage({ type: 'ready', version: "3.0.0" });
     } catch (e) {
       this.alive = false;
       this.port.postMessage({ type: 'error', message: String(e && e.message || e) });

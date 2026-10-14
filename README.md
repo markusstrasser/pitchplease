@@ -107,6 +107,7 @@ const detector = create({
   clearAfterMs: 200,         // silence before the held chord clears
   stabilityFrames: 1,        // frames the pitch-class set must hold before a chord is named (fft default: 4)
   modelBaseUrl: undefined,   // a folder holding fast.bin, piano.bin, voice.bin if you host the weights yourself
+  assetBaseUrl: undefined,   // a folder holding copies of engine/ and models/ from this package release
   kernel: 'auto',            // detector kernel; 'auto' picks the fastest this browser supports
   fftSize: 16384,            // 'fft' only: a power of two from 32 to 32768
 });
@@ -201,8 +202,20 @@ cross-origin CDN import. Each model file downloads only when that model is used.
 
 - **webpack** warns that the three `.bin` files exceed its 244 KiB asset hint. They are fetched on demand, so the
   warning can be ignored (or silenced with `performance: { hints: false }`).
-- **Self-hosting the weights**: copy `models/` anywhere and pass `modelBaseUrl: 'https://cdn.example.com/pp/'`. This
-  moves `models/` only: `engine/` (the worklet and the `.wasm` kernels) must stay next to `pitchplease.js`.
+- **Self-hosting all assets**: copy `engine/` and `models/` from the same package release into a folder and pass
+  `assetBaseUrl: 'https://cdn.example.com/pp/'` to `create()` or `analyze()`. The worklet loads from
+  `pp/engine/worklet.js`, the kernels from `pp/engine/incport.wasm` and `pp/engine/incport-relaxed.wasm`, and weights
+  from `pp/models/<id>.bin`. Relative bases resolve against the page URL in browsers; Node needs an absolute URL
+  (including `file:` for local copies). A query string on the base is kept on every asset URL.
+- **Self-hosting the weights**: copy `models/` anywhere and pass `modelBaseUrl: 'https://cdn.example.com/weights/'`.
+  It takes precedence over `assetBaseUrl` for models only. Without `assetBaseUrl`, `engine/` stays next to
+  `pitchplease.js`.
+- **Keep a release together**: a worklet from another package version fails with `worklet-load-failed`; weights from
+  another model revision fail with `model-load-failed`. WASM bytes are checked against the shipped SHA-256 when
+  `crypto.subtle` is available. A mismatch fails with `kernel-load-failed` for an explicit kernel; `auto` warns and
+  tries the next supported kernel. `models` exposes each trained model's `revision`, which identifies its weights
+  and changes when it is retrained (`null` for `fft`). `engine/vendor.json` records the exporting commit, source
+  hashes, revision and operating point for each model.
 - **Cross-origin**: the worklet and the weights need CORS headers when served from another origin (public npm CDNs
   send them).
 - **Node**: `analyze()` works in Node ≥ 20.19 and Bun; `require('@markusstrasser/pitchplease')` works too.

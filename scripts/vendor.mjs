@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { isMainModule } from './build.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-export const PITCHTEST = join(ROOT, '../pitchtest');
+export const PITCHTEST = process.env.PITCHTEST ?? join(ROOT, '../pitchtest');
 const HEADER = /^\/\/ Vendored from pitchtest (\S+) @ (\w+)\. [^\n]*\n/;
 const isText = (name) => /\.(js|mjs)$/.test(name); // gets a // header line (a JSON file could not take one)
 const sha256 = (b) => createHash('sha256').update(b).digest('hex');
@@ -43,6 +43,7 @@ export function checkVendored({ root = ROOT, pitchtest = PITCHTEST, upstream = e
   const manifest = JSON.parse(readFileSync(join(root, 'engine/vendor.json'), 'utf8'));
   const problems = [], notes = [];
   for (const [name, entry] of Object.entries(manifest)) {
+    if (name === 'models') continue; // model provenance is checked by build.mjs --check
     const { body, headerCommit } = vendoredBody(name, root);
     if (!/^[0-9a-f]{40}$/.test(entry.commit)) problems.push(`engine/vendor.json: ${name} records '${entry.commit}', not a full commit hash`);
     if (sha256(body) !== entry.sha256) problems.push(`engine/${name} was edited after vendoring (sha256 differs from engine/vendor.json)`);

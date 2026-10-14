@@ -103,6 +103,8 @@ export interface ModelInfo {
   readonly voiceF1: number;
   /** The operating point the model was calibrated at; null for 'fft'. */
   readonly threshold: Readonly<Threshold> | null;
+  /** Identifies the weights; changes whenever a model is retrained. null for 'fft'. */
+  readonly revision: string | null;
 }
 
 export interface CommonOptions {
@@ -117,10 +119,14 @@ export interface CommonOptions {
   threshold?: Partial<Threshold>;
   /**
    * Folder that holds fast.bin, piano.bin and voice.bin, if you host the weights yourself (a string or a URL; a
-   * query such as ?v=3 is kept). Outside a browser it must be absolute. It relocates models/ only: engine/ (the
-   * worklet and the .wasm kernels) must stay next to pitchplease.js.
+   * query such as ?v=3 is kept). Outside a browser it must be absolute. Takes precedence over assetBaseUrl for models.
    */
   modelBaseUrl?: string | { readonly href: string };
+  /**
+   * Folder containing engine/ and models/ copied from this package release. Relocates the worklet, WASM and models.
+   * A string or URL; relative to the page in browsers, absolute required in Node. A query string is kept.
+   */
+  assetBaseUrl?: string | { readonly href: string };
   /** Detector kernel (default 'auto'; under 'auto', a WASM kernel that fails falls back to JavaScript). */
   kernel?: KernelId;
   /** Frames the pitch-class set must hold before a chord is named (default 1 for trained models, 4 for 'fft'). */

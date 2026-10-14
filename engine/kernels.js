@@ -21,6 +21,12 @@ import * as wasmKernel from './incport-wasm.js';
 
 export const IMPLS = { js: jsKernel, wasm: wasmKernel };
 
+// GENERATED from engine/vendor.json by scripts/build.mjs; runtime integrity for fetched kernel bytes.
+export const WASM_SHA256 = {
+  'wasm-relaxed': '6ea4b3081e8598aa53585351309ed14320f7b6df5d6dc22c788239fcbd7b778e',
+  'wasm-simd': 'e86fcbff8b20170dffb699fd84590e0fc3431f55bb22da4e003d6c266f2534c7',
+};
+
 // Tiny modules for WebAssembly.validate (synchronous, microseconds).
 // simd128: (func (result v128) i32.const 0 i8x16.splat i8x16.popcnt)
 export const SIMD_PROBE = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11]);

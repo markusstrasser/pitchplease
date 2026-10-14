@@ -7,6 +7,205 @@ import { CHOICES, RELAXED_SIMD_PROBE, SIMD_PROBE, kernelSupported, pickKernel } 
 import { resolveKernel } from '../engine/kernel-load.js';
 import { modelUrl } from '../engine/models.js';
 import { readWav } from './helpers/wav.js';
+import { cpSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
+import { packModel, unpackModel } from '../engine/models.js';
+import { installBrowser } from './helpers/browser.js';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+
+const copyAssets = () => {
+  const dir = mkdtempSync(`${tmpdir()}/pp-assets-`);
+  for (const name of ['engine', 'models']) cpSync(new URL(`../${name}`, import.meta.url), `${dir}/${name}`, { recursive: true });
+  return { dir, base: pathToFileURL(dir + '/') };
+};
+const wrongRevision = (file) => {
+  const b = readFileSync(file);
+  const { header, weights } = unpackModel(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+  writeFileSync(file, packModel({ ...header, revision: '000000000000' }, new Float32Array(weights)));
+};
+
+describe('self-hosted assets', () => {
+  test('analyze loads models from assetBaseUrl; modelBaseUrl takes precedence', async () => {
+    const { dir, base } = copyAssets();
+    wrongRevision(`${dir}/models/fast.bin`);
+    const e = await P.analyze(new Float32Array(4800), 48000, { assetBaseUrl: base, kernel: 'js' }).catch(e => e);
+    expect(e.code).toBe('model-load-failed');
+    expect(e.message).toContain(new URL('models/fast.bin', base).href);
+    expect(e.message).toMatch(/holds weights revision 000000000000/);
+    expect(e.message).toContain(P.models[0].revision);
+    const nodeError = JSON.parse(execFileSync('node', ['--input-type=module', '-e',
+      `import { analyze } from ${JSON.stringify(new URL('../pitchplease.js', import.meta.url).href)};
+       try { await analyze(new Float32Array(0), 48000, { assetBaseUrl: ${JSON.stringify(base.href)}, kernel: 'js' }); }
+       catch(e) { console.log(JSON.stringify({ code: e.code, message: e.message })); }`], { encoding: 'utf8' }));
+    expect(nodeError).toEqual({ code: e.code, message: e.message });
+    expect((await P.analyze(new Float32Array(4800), 48000, {
+      assetBaseUrl: base, modelBaseUrl: new URL('../models/', import.meta.url), kernel: 'js',
+    })).length).toBeGreaterThan(0);
+  }, 30_000);
+
+  test('relative asset bases in Node fail as bad-options', async () => {
+    const e = await P.analyze(new Float32Array(0), 48000, { assetBaseUrl: './assets/' }).catch(e => e);
+    expect(e.code).toBe('bad-options');
+    expect(e.message).toMatch(/assetBaseUrl.*must be absolute/);
+    expect(() => P.create({ assetBaseUrl: '' })).toThrow(/assetBaseUrl/);
+    for (const assetBaseUrl of ['data:text/plain,assets', 'mailto:assets@example.com', 123, {}]) {
+      const e = await P.analyze(new Float32Array(0), 48000, { assetBaseUrl }).catch(e => e);
+      expect(e.code).toBe('bad-options');
+    }
+  });
+
+  test('tampered WASM fails explicitly; auto warns and falls back to JS', async () => {
+    await resolveKernel('wasm-simd', 'module'); // a good cached default must not hide a bad relocated copy
+    const { dir, base } = copyAssets();
+    for (const name of ['incport.wasm', 'incport-relaxed.wasm']) {
+      const file = `${dir}/engine/${name}`, bytes = readFileSync(file);
+      bytes[bytes.length - 1] ^= 1;
+      writeFileSync(file, bytes);
+    }
+    const e = await P.analyze(new Float32Array(4800), 48000, { assetBaseUrl: base, kernel: 'wasm-simd' }).catch(e => e);
+    expect(e.code).toBe('kernel-load-failed');
+    expect(e.message).toMatch(/SHA-256 mismatch/);
+    expect(e.message).toContain(new URL('engine/incport.wasm', base).href);
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const frames = await P.analyze(new Float32Array(4800), 48000, { assetBaseUrl: base });
+      expect(frames).toEqual(await P.analyze(new Float32Array(4800), 48000, { kernel: 'js' }));
+      expect(warn.mock.calls.flat().join(' ')).toMatch(/SHA-256 mismatch.*Falling back/);
+      expect(warn.mock.calls.flat().join(' ')).toContain("'js' kernel");
+    } finally { warn.mockRestore(); }
+  }, 30_000);
+
+  test('kernel byte and module caches distinguish resolved URLs', async () => {
+    const a = copyAssets(), b = copyAssets();
+    const first = await resolveKernel('wasm-simd', 'bytes', undefined, a.base);
+    const second = await resolveKernel('wasm-simd', 'bytes', undefined, b.base);
+    expect(first.wasm).not.toBe(second.wasm);
+    expect(new Uint8Array(first.wasm)).toEqual(new Uint8Array(second.wasm));
+    expect((await resolveKernel('wasm-simd', 'bytes', undefined, a.base)).wasm).toBe(first.wasm);
+    const am = await resolveKernel('wasm-simd', 'module', undefined, a.base);
+    const bm = await resolveKernel('wasm-simd', 'module', undefined, b.base);
+    expect(am.wasm).not.toBe(bm.wasm);
+    expect((await resolveKernel('wasm-simd', 'module', undefined, a.base)).wasm).toBe(am.wasm);
+  });
+
+  test('without crypto.subtle a relocated kernel loads without an integrity warning', async () => {
+    const { dir, base } = copyAssets();
+    const file = `${dir}/engine/incport.wasm`, bytes = readFileSync(file);
+    bytes[bytes.length - 1] ^= 1;
+    writeFileSync(file, bytes);
+    const saved = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    Object.defineProperty(globalThis, 'crypto', { configurable: true, value: undefined });
+    try {
+      const loaded = await resolveKernel('wasm-simd', 'bytes', undefined, base);
+      expect(new Uint8Array(loaded.wasm)).toEqual(new Uint8Array(bytes));
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      if (saved) Object.defineProperty(globalThis, 'crypto', saved); else delete globalThis.crypto;
+    }
+  });
+
+  test('a version mismatch delivered after startup stops the suspended session', async () => {
+    const browser = installBrowser({ startSuspended: true, resumeDelayMs: Infinity });
+    const Original = globalThis.AudioWorkletNode;
+    let timer;
+    globalThis.AudioWorkletNode = class extends Original {
+      constructor(...args) {
+        super(...args);
+        const port = this.port;
+        this.port = {
+          postMessage: port.postMessage.bind(port),
+          set onmessage(fn) {
+            port.onmessage = fn && (e => {
+              if (e.data.type === 'ready') timer = setTimeout(() => fn({ data: { ...e.data, version: '0.0.0' } }), 2200);
+              else fn(e);
+            });
+          },
+        };
+      }
+    };
+    let received, errorDeadline;
+    const error = new Promise(resolve => { received = resolve; });
+    const d = P.create({ kernel: 'js', onError: received });
+    try {
+      expect(await d.start()).toBe(true);
+      const reported = await Promise.race([error, new Promise(resolve => { errorDeadline = setTimeout(resolve, 3000); })]);
+      expect(reported?.code).toBe('worklet-load-failed');
+      expect(d.running).toBe(false);
+      expect(browser.state.closed).toBe(1);
+      expect(browser.state.stoppedTracks).toBe(1);
+    } finally { clearTimeout(timer); clearTimeout(errorDeadline); d.stop(); browser.restore(); }
+  }, 10_000);
+
+  test('asset folders resolve relative to a browser page and preserve queries', () => {
+    const old = Object.getOwnPropertyDescriptor(globalThis, 'location');
+    Object.defineProperty(globalThis, 'location', { configurable: true, value: { href: 'https://app.example/page/index.html' } });
+    try {
+      expect(modelUrl('fast', undefined, '../assets?v=31').href).toBe('https://app.example/assets/models/fast.bin?v=31');
+      expect(modelUrl('fast', 'https://models.example/other?x=1', '../assets?v=31').href).toBe('https://models.example/other/fast.bin?x=1');
+      expect(() => P.create({ assetBaseUrl: '../assets?v=31' })).not.toThrow();
+    } finally {
+      if (old) Object.defineProperty(globalThis, 'location', old); else delete globalThis.location;
+    }
+  });
+
+  test('a different revision at modelBaseUrl is refused', async () => {
+    const { dir, base } = copyAssets();
+    wrongRevision(`${dir}/models/fast.bin`);
+    const e = await P.analyze(new Float32Array(0), 48000, { modelBaseUrl: new URL('models/', base), kernel: 'js' }).catch(e => e);
+    expect(e.code).toBe('model-load-failed');
+    expect(e.message).toMatch(/holds weights revision 000000000000/);
+  });
+
+  test('a mismatched worklet version fails with both versions and its URL', async () => {
+    const browser = installBrowser();
+    const Original = globalThis.AudioWorkletNode;
+    globalThis.AudioWorkletNode = class extends Original {
+      constructor(...args) {
+        super(...args);
+        const port = this.port;
+        this.port = {
+          postMessage: port.postMessage.bind(port),
+          set onmessage(fn) { port.onmessage = fn && (e => fn({ data: { ...e.data, version: '0.0.0' } })); },
+        };
+      }
+    };
+    const d = P.create({ kernel: 'js' });
+    try {
+      const e = await d.start().catch(e => e);
+      expect(e.code).toBe('worklet-load-failed');
+      expect(e.message).toContain('0.0.0');
+      expect(e.message).toContain(P.version);
+      expect(e.message).toContain(new URL('../engine/worklet.js', import.meta.url).href);
+      expect(e.message).toMatch(/copy engine\/ and models\/ from one release/i);
+      expect(d.running).toBe(false);
+    } finally { d.stop(); browser.restore(); }
+  });
+
+  test('create relocates the worklet and keeps the base query', async () => {
+    const { base } = copyAssets();
+    base.search = '?release=31';
+    const browser = installBrowser();
+    const Original = globalThis.AudioContext;
+    const urls = [];
+    globalThis.AudioContext = class extends Original {
+      constructor(...args) {
+        super(...args);
+        const addModule = this.audioWorklet.addModule;
+        this.audioWorklet.addModule = url => { urls.push(String(url)); return addModule(url); };
+      }
+    };
+    const d = P.create({ assetBaseUrl: base, kernel: 'js' });
+    try {
+      expect(await d.start()).toBe(true);
+      expect(urls).toEqual([new URL('engine/worklet.js?release=31', base).href]);
+      expect(await d.setModel('piano')).toBe('piano');
+    } finally { d.stop(); browser.restore(); }
+  });
+});
 
 const { samples: CHORD } = readWav(new URL('./fixtures/chord-a-major.wav', import.meta.url).pathname);
 const modalChord = (frames) => {
@@ -17,6 +216,19 @@ const modalChord = (frames) => {
 const resample = (x, from, to) => { const r = createResampler(from, to); return Float32Array.from([...r.push(x), ...r.push(new Float32Array(Math.ceil(from * 0.01)))]); };
 
 describe('analyze()', () => {
+  test('every frame retains the 3.0.0 notes after rebuilding model headers', async () => {
+    const hashes = {
+      fast: '0133f6f2579c1145fbc0958401cfc1ea57202d39281fc02efb76a71232e035af',
+      piano: 'd4d1032c8798a67a1bc580b2ccf7f7503f64a204a713a1c7836736db26451ac1',
+      voice: 'ee43f21ac385e1c0a59a7dd8730fa341e7107d8b9b2bf191fc5138caf77c71f9',
+    };
+    for (const [model, hash] of Object.entries(hashes)) {
+      const frames = await P.analyze(CHORD, 48000, { model, kernel: 'wasm-simd' });
+      expect(frames.length).toBe(172);
+      expect(createHash('sha256').update(JSON.stringify(frames.map(f => f.notes))).digest('hex')).toBe(hash);
+    }
+  }, 60_000);
+
   test('every model names the A major chord in the fixture', async () => {
     for (const m of P.models) expect([m.id, modalChord(await P.analyze(CHORD, 48000, { model: m.id }))]).toEqual([m.id, 'A']);
   }, 120_000);

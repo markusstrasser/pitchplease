@@ -18,5 +18,46 @@
     "from": "web/incport-relaxed.wasm",
     "commit": "78a3dd19dda521e38904750045842edf38938389",
     "sha256": "6ea4b3081e8598aa53585351309ed14320f7b6df5d6dc22c788239fcbd7b778e"
+  },
+  "models": {
+    "fast": {
+      "dir": "pitchtest/web/weights",
+      "head": "models/ft/R-T-L2-OW-w10L-s0.npz",
+      "commit": "78a3dd19dda521e38904750045842edf38938389",
+      "manifestSha256": "3a63adfafbfb1aa6a378eee07ae30a02a4daa1af0102d3c0d01d652c3e26f94c",
+      "weightsSha256": "4fb4ff7b23d36124e53b58b9d7497a089eec8ac7a91bb53a201858a47fade396",
+      "revision": "b93e9658481c",
+      "threshold": {
+        "on": 0.7,
+        "off": 0.42
+      },
+      "thresholdSource": "pitchtest/research/doe-train-vs-port.md:2305 (W10-L, latency rule: 0.7/0.42)"
+    },
+    "piano": {
+      "dir": "pitchtest/web/weights-bp8LR1",
+      "head": "models/ft/R-T-L2-OW-bp8LR1-s0.npz",
+      "commit": "78a3dd19dda521e38904750045842edf38938389",
+      "manifestSha256": "16cc85d43822a2db6cf9ca0a2f839b5b23eff155f2ae6b4cde3d1167bc4bba68",
+      "weightsSha256": "2ba053454b5c8c795a5c9477a3ad28354871766f734df15ff263c180f05d623b",
+      "revision": "28bf7933b9c5",
+      "threshold": {
+        "on": 0.6,
+        "off": 0.36
+      },
+      "thresholdSource": "pitchtest/research/doe-train-vs-port.md:2305 (BP8-LR1, latency rule: 0.6/0.36)"
+    },
+    "voice": {
+      "dir": "pitchtest/web/weights-vpc",
+      "head": "models/ft/R-T-L2-OW-vpc-s0.npz",
+      "commit": "78a3dd19dda521e38904750045842edf38938389",
+      "manifestSha256": "4f5b11433836ed0145a2c059af9edfcb015ff78811f5b60b4646fa6882e4e9e9",
+      "weightsSha256": "6314544098ef204a13397bc1b571abd550c9ce62a97c1923ef1c42a2abb98024",
+      "revision": "bb4d3d6a50d4",
+      "threshold": {
+        "on": 0.65,
+        "off": 0.39
+      },
+      "thresholdSource": "pitchtest/logs/lv19-vpc-maestro_test.log:5 (VPC point: 0.65/0.39)"
+    }
   }
 }

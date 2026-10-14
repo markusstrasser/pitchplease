@@ -24,6 +24,11 @@ describe('packed models', () => {
       const file = readFileSync(`${ROOT}models/${id}.bin`);
       const { header, manifest, weights } = unpackModel(ab(file));
       expect(header.model).toBe(id);
+      const model = P.models.find(m => m.id === id);
+      expect(header.revision).toBe(model.revision);
+      expect(header.revision).toBe(sha256(Buffer.from(weights)).slice(0, 12));
+      expect(header.threshold).toEqual(model.threshold);
+      expect(header.source.commit).toMatch(/^[0-9a-f]{40}$/);
       expect(header.source.dir).toBe(`pitchtest/web/${MODEL_SOURCES[id]}`);
       expect(header.source.dropped).toEqual(['c1_w', 'c4_b', 'c4_w', 'c5_b', 'c5_w']); // unused by the kernel
       const packed = refKernel.parseWeights(manifest, weights);
@@ -36,6 +41,16 @@ describe('packed models', () => {
       for (const [k, t] of Object.entries(packed.tensors)) expect(Buffer.compare(Buffer.from(ab(t)), Buffer.from(ab(src.tensors[k])))).toBe(0);
     });
   }
+
+  test('3.0.0 float payloads remain byte-identical after adding release headers', () => {
+    // Captured from the unmodified 3.0.0 checkout before this rebuild, independent of its new headers.
+    const hashes = {
+      fast: 'b93e9658481ca7ae7670ac567083eaf73d22dc0472b640e5daf92890a4152b52',
+      piano: '28bf7933b9c51b72c4a9ea66cfa1c344c1491003efd47468e4b77eca556f9856',
+      voice: 'bb4d3d6a50d44e1e9ba88ebd1563d9ac1ccde0473e57ad168fdffb387197ffbc',
+    };
+    for (const id of TRAINED) expect(sha256(Buffer.from(unpackModel(ab(readFileSync(`${ROOT}models/${id}.bin`))).weights))).toBe(hashes[id]);
+  });
 
   test('pack/unpack round trip', () => {
     const data = Float32Array.from({ length: 10 }, (_, i) => i / 3);
