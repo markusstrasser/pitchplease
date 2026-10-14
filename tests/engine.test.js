@@ -18,6 +18,13 @@ const TRAINED = ['fast', 'piano', 'voice'];
 const sha256 = (b) => createHash('sha256').update(b).digest('hex');
 const ab = (b) => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
 
+// tests/perf/worklet-rtf.mjs patches the generated worklet's registration line; a build that changes it must say so.
+test('the worklet benchmark still finds the generated registration', async () => {
+  const { diagnosticWorkletSource } = await import('./perf/worklet-rtf.mjs');
+  expect(diagnosticWorkletSource(readFileSync(`${ROOT}engine/worklet.js`, 'utf8'))).toContain("registerProcessor('pitchplease-perf'");
+  expect(() => diagnosticWorkletSource("registerProcessor('renamed', class {});")).toThrow(/registration changed/);
+});
+
 describe('packed models', () => {
   for (const id of TRAINED) {
     test(`${id}: header, provenance and tensors`, () => {

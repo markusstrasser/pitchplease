@@ -77,6 +77,13 @@ jobs (so a quiet machine does better):
 | Chrome 155 | JavaScript | 29% | 74% | 71% |
 | Firefox 157 | JavaScript | 53% | 102% | 101% |
 
+`cpuLoad` reports the real cost: rendering 30 s through the worklet offline takes as long as `cpuLoad` says, within
+about 5%, in Chrome and WebKit. WebKit is the outlier. Its main thread runs the WebAssembly detector as fast as
+Chrome's (`piano` at 0.16–0.18 of real time), but its audio-worklet thread runs the same code 1.2–5× slower, depending
+on machine load, while plain JavaScript on that thread runs only about 1.2× slower. Compiling the module on the main
+thread and passing it in did not reliably help. These are Playwright WebKit 27.2 measurements on a loaded M3 Pro; real
+Safari is untested. On Safari, watch `stats.cpuLoad` and switch to `fast` if it stays above 0.8.
+
 The JavaScript kernel is the fallback for browsers without WebAssembly SIMD. In WebKit it runs `piano` at 6.6× real
 time (`fast`: 0.36×), so on Safari before 16.4 use `fast`.
 
@@ -286,6 +293,8 @@ npm run test:ui        # headless Chrome with a fake microphone: all four models
                        # after a failed model download; screenshots in tests/ui-shots/
 npm run build          # regenerate engine/worklet.js after editing engine/processor.js or the kernel
 npm run vendor -- incport-wasm.js incport.wasm   # re-vendor kernel files from a committed ../pitchtest/web
+PLAYWRIGHT_MODULE=…/playwright/index.mjs node tests/perf/worklet-rtf.mjs --browsers webkit,chromium
+                       # worklet render time vs the main thread, per browser and model (Playwright installed separately)
 ```
 
 `engine/worklet.js` is generated: the worklet must be a single file because bundlers copy it as an asset without its
