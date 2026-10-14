@@ -374,3 +374,24 @@ describe('start() and setModel() resolve to what happened', () => {
     expect(errors).toEqual(['processor-error', 'unknown-model']);
   });
 });
+
+describe('readiness', () => {
+  test('setModel(): a new engine that never reports ready does not replace the running one', async () => {
+    const errors = [];
+    let notes = 0;
+    const d = P.create({ onError: (e) => errors.push(e), onNotes: () => notes++ });
+    await d.start();
+    env.state.dropReady = true;
+    expect(await d.setModel('piano')).toBe('fast');
+    expect(errors.map((e) => e.code)).toEqual(['processor-error']);
+    expect(errors[0].message).toMatch(/'piano' detector did not report ready within 2 s/);
+    expect(d.stats.model).toBe('fast');
+    env.ctx.render(CHORD.subarray(0, 24000));
+    await until(() => notes > 10);
+    d.stop();
+    // start() has no engine to protect: it still installs (frames may wait for a suspended context to resume)
+    const d2 = P.create();
+    expect(await d2.start()).toBe(true);
+    d2.stop();
+  }, 30_000);
+});

@@ -97,6 +97,8 @@ export function installBrowser({ sampleRate = 48000, micError = null, worklet = 
       const Proc = processors.get(name);
       if (!Proc) throw new Error(`AudioWorkletNode: no processor '${name}' registered`);
       const { port1, port2 } = new MessageChannel();
+      const post = port2.postMessage.bind(port2); // state.dropReady: the processor's 'ready' never arrives
+      port2.postMessage = (msg, transfer) => { if (!(state.dropReady && msg?.type === 'ready')) post(msg, transfer); };
       this.port = port1;
       pendingPort = port2;
       globalThis.sampleRate = ctx.sampleRate;

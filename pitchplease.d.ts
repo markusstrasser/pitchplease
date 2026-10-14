@@ -188,6 +188,10 @@ export interface Detector {
    */
   setModel(id: ModelId): Promise<ModelId | null>;
   readonly paused: boolean;
+  /**
+   * A session is started: the engine is installed. Outside a click or key handler the audio context can still be
+   * suspended, and frames then wait until it resumes (on the next click or key press).
+   */
   readonly running: boolean;
   /** The selected model. */
   readonly model: ModelId;

@@ -29,6 +29,7 @@ const ANALYZE_CHUNK = 128; // samples per push, as one Web Audio render quantum
 const ANALYZE_TAIL_SECONDS = 0.25; // zeros appended so the last frames of the input are emitted
 const RESUME_WAIT_MS = 200; // start() waits this long for the context to resume, then builds the engine anyway
 const READY_WAIT_MS = 2000; // a new worklet engine has this long to report its detector built; later failures stop it
+const NOT_READY = Symbol('not ready');
 
 // ============ OPTIONS AND ERRORS ============
 
@@ -373,8 +374,10 @@ export function create(options = {}) {
   }
 
   // The engine for model `id` on session s, or null once stale() (stop(), or a newer setModel()) made it pointless.
-  // Under kernel 'auto', a WASM kernel that fails in the audio thread is replaced by the JavaScript one.
-  async function buildEngine(s, id, stale) {
+  // Under kernel 'auto', a WASM kernel that fails in the audio thread is replaced by the JavaScript one. mustBeReady
+  // (setModel, which has a running engine to protect): no 'ready' within READY_WAIT_MS is a failure. start() has
+  // nothing to protect and installs anyway, since a suspended context may build its processor only once it resumes.
+  async function buildEngine(s, id, stale, { mustBeReady = false } = {}) {
     const m = getModel(id);
     if (m.id === 'fft') return fftEngine(s);
     checkWorklet(m.id);
@@ -385,10 +388,13 @@ export function create(options = {}) {
     for (let kernel = first; ;) {
       if (stale()) return null;
       const eng = workletEngine(s, m, kernel, loaded, tracker, threshold);
-      const failure = await within(eng.ready, READY_WAIT_MS, null);
+      const failure = await within(eng.ready, READY_WAIT_MS, mustBeReady ? NOT_READY : null);
       if (stale()) { eng.stop(); return null; }
       if (failure === null) return eng;
       eng.stop();
+      if (failure === NOT_READY) {
+        throw new PitchPleaseError('processor-error', `The '${m.id}' detector did not report ready within ${READY_WAIT_MS / 1000} s.`);
+      }
       if (preference !== 'auto' || kernel.choice.impl === 'js') {
         throw new PitchPleaseError('processor-error', `The '${m.id}' detector stopped in the audio thread: ${failure}`);
       }
@@ -517,7 +523,7 @@ export function create(options = {}) {
     try {
       if (!s.running) await s.started.catch(() => {}); // starting: it may build this model itself
       if (stale() || !s.running || s.engine.model === m.id) return runningModel();
-      const next = await buildEngine(s, m.id, stale);
+      const next = await buildEngine(s, m.id, stale, { mustBeReady: true });
       if (!next) return runningModel();
       if (heldChord) { heldChord = null; call(onChordEnd); } // the old engine still runs during this callback
       if (stale()) { next.stop(); return runningModel(); }

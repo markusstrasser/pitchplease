@@ -114,8 +114,8 @@ const detector = create({
 | `await start(stream?)` | Opens the microphone (raw: no echo cancellation, noise suppression or gain control) or uses the `MediaStream` you pass. Downloads the model while the permission prompt shows. Resolves `true` once detecting, `false` if it failed (with `onError`) or `stop()` cancelled it; a second call while starting or running shares that outcome. |
 | `stop()` | Stops, releases the microphone (a stream you passed is left running) and clears the pause. A `start()` still opening is cancelled quietly. `start()` works again. |
 | `togglePause()` | Pauses or resumes; returns the new paused state. |
-| `await setModel(id)` | Swaps models while running: the new model takes over once it runs in the audio thread, then the old one stops; the mic stays open. If the new model fails, the old one keeps running and the error is reported. Resolves the model running afterwards (`id`, the old model after a failure, or `null` when nothing runs). Before `start()`, it selects the model and preloads its weights. |
-| `model`, `running`, `paused` | Current state. |
+| `await setModel(id)` | Swaps models while running: the new model takes over once it reports ready in the audio thread (within 2 s, else the switch fails), then the old one stops; the mic stays open. If the new model fails, the old one keeps running and the error is reported. Resolves the model running afterwards (`id`, the old model after a failure, or `null` when nothing runs). Before `start()`, it selects the model and preloads its weights. |
+| `model`, `running`, `paused` | Current state. `running` means the session started and its engine is installed; if the audio context is still suspended (`start()` ran outside a click or key handler), frames begin when it resumes on the next click or key press. |
 | `stats` | `{ model, kernel, cpuLoad, framesPerSecond, sampleRate }`. `cpuLoad` is detector time / audio time, measured in the audio thread (`fft`: on the main thread). |
 
 **Notes** (`onNotes`) are `{ midi, name, pitchClass, prob }`, lowest first: `{ midi: 61, name: 'C#4', pitchClass: 1,
