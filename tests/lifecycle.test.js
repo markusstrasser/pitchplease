@@ -408,3 +408,16 @@ describe('threshold', () => {
     d.stop();
   });
 });
+
+describe('pause', () => {
+  test('togglePause() before start() is a no-op: start() detects', async () => {
+    let n = 0;
+    const d = P.create({ onNotes: () => n++ });
+    expect(d.togglePause()).toBe(false);
+    expect(d.paused).toBe(false);
+    await d.start();
+    env.ctx.render(CHORD.subarray(0, 24000));
+    await until(() => n > 10);
+    d.stop();
+  });
+});

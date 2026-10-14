@@ -495,6 +495,7 @@ export function create(options = {}) {
   }
 
   function togglePause() {
+    if (!session) return false; // nothing to pause before start(); stop() clears pause, so paused is false here
     paused = !paused;
     session?.engine?.setPaused(paused);
     return paused;

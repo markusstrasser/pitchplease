@@ -180,7 +180,7 @@ export interface Detector {
   start(source?: MediaStreamLike): Promise<boolean>;
   /** Stop detecting, release the microphone and clear the pause. A start() still opening is cancelled quietly. */
   stop(): void;
-  /** Pause or resume; returns the new paused state. */
+  /** Pause or resume; returns the new paused state. Before start() (or after stop()) it does nothing and returns false. */
   togglePause(): boolean;
   /**
    * Switch models while running, without asking for the microphone again: the new model takes over once it runs; if
