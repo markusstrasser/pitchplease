@@ -159,6 +159,49 @@ describe('start() and stop() racing', () => {
 });
 
 describe('setModel() racing start() and itself', () => {
+  test('recovery from a failed replacement preserves a newer model switch', async () => {
+    const errors = [];
+    const d = P.create({ onError: e => errors.push(e) });
+    try {
+      await d.start();
+      await d.setModel('piano');
+      const newer = d.setModel('voice');
+      env.state.nodes[1].onprocessorerror();
+      expect(await newer).toBe('voice');
+      expect(d.model).toBe('voice');
+      expect(errors.map(e => e.code)).toEqual(['processor-error']);
+      expect(await d.setModel('fast')).toBe('fast');
+      expect(d.model).toBe('fast');
+    } finally { d.stop(); }
+  });
+
+  for (const withHandler of [false, true]) {
+    test(`a replacement dying before its first frame restores the old engine (onError: ${withHandler})`, async () => {
+      const errors = [], frames = [];
+      const log = spyOn(console, 'error').mockImplementation(e => errors.push(e));
+      const d = P.create({ onNotes: (_, f) => frames.push(f), ...(withHandler ? { onError: e => errors.push(e) } : {}) });
+      try {
+        await d.start();
+        env.ctx.render(CHORD.subarray(0, 24000));
+        await until(() => frames.length > 10);
+        await d.setModel('piano');
+        const [oldNode, failed] = env.state.nodes;
+        failed.onprocessorerror();
+        expect(d.running).toBe(true);
+        expect(d.model).toBe('fast');
+        expect(d.stats.model).toBe('fast');
+        expect(env.ctx.sources[0].targets.has(oldNode)).toBe(true);
+        expect(env.ctx.sources[0].targets.has(failed)).toBe(false);
+        expect(errors.map(e => e.code)).toEqual(['processor-error']);
+        const count = frames.length;
+        env.ctx.render(CHORD.subarray(24000, 48000));
+        await until(() => frames.length > count + 10);
+        expect(frames[count].time).toBeGreaterThan(frames[count - 1].time);
+        expect(log.mock.calls.length).toBe(withHandler ? 0 : 1);
+      } finally { d.stop(); log.mockRestore(); }
+    });
+  }
+
   test('setModel during start(): the new model is built once, with no spurious chord end', async () => {
     let ends = 0;
     const d = P.create({ onChordEnd: () => ends++ });
@@ -221,10 +264,12 @@ describe('setModel() racing start() and itself', () => {
     await d.start();
     await d.setModel('piano');
     const [oldNode, node] = env.state.nodes;
+    env.ctx.render(CHORD.subarray(0, 24000));
+    await until(() => !env.ctx.sources[0].targets.has(oldNode)); // replacement has actually taken over
     oldNode.onprocessorerror?.(); // the replaced engine's crash is not this detector's problem
     await settle(10);
     expect(errors).toEqual([]);
-    node.processor.port.postMessage({ type: 'error', message: 'out of memory' }); // the running one dies
+    node.processor.port.postMessage({ type: 'error', version: P.version, message: 'out of memory' }); // the running one dies
     await until(() => errors.length > 0);
     expect(errors[0].code).toBe('processor-error');
     expect(errors[0].message).toMatch(/'piano' detector stopped in the audio thread: out of memory/);
@@ -259,6 +304,105 @@ describe('setModel() racing start() and itself', () => {
 });
 
 describe('browser quirks', () => {
+  for (const model of ['fast', 'fft']) {
+    test(`owner stop() is polled once per session and releases ${model}`, async () => {
+      const errors = [];
+      const intervals = spyOn(globalThis, 'setInterval');
+      const clear = spyOn(globalThis, 'clearInterval');
+      const d = P.create({ model, onError: e => errors.push(e) });
+      const stream = new env.MediaStream();
+      stream.tracks.push(new env.MediaStream().getAudioTracks()[0]);
+      try {
+        await d.start(stream);
+        expect(intervals.mock.calls.length).toBe(1);
+        expect(intervals.mock.calls[0][1]).toBe(1000);
+        const poll = intervals.mock.calls[0][0];
+        stream.tracks[0].stop();
+        poll(); // another live audio track remains
+        expect(d.running).toBe(true);
+        stream.tracks[1].stop();
+        await until(() => !d.running, 2000); // real interval observes stop(), which emits no event
+        expect(errors.map(e => e.code)).toEqual(['mic-ended']);
+        expect(clear.mock.calls.length).toBe(1);
+        expect(env.state.stoppedTracks).toBe(2); // caller stopped them, detector did not
+        await d.start();
+        poll(); // an obsolete watcher cannot kill the next start
+        expect(d.running).toBe(true);
+        d.stop();
+        expect(intervals.mock.calls.length).toBe(2);
+        expect(clear.mock.calls.length).toBe(2);
+      } finally { d.stop(); intervals.mockRestore(); clear.mockRestore(); }
+    });
+  }
+
+  test('recovery listens for a gesture before a hung resume settles', async () => {
+    const d = P.create();
+    try {
+      await d.start();
+      const ctx = env.ctx;
+      const resume = spyOn(ctx, 'resume');
+      resume.mockImplementationOnce(() => new Promise(() => {}));
+      ctx.setState('interrupted');
+      expect(env.state.listeners.get('pointerdown')?.size).toBe(1);
+      env.dispatch('pointerdown'); // immediately, within the 200 ms timeout
+      await settle();
+      expect(ctx.resumeCalls).toBe(2); // initial start and successful gesture
+      expect(ctx.state).toBe('running');
+      expect(env.state.listeners.get('pointerdown').size).toBe(0);
+      resume.mockRestore();
+    } finally { d.stop(); }
+  });
+
+  for (const reason of ['ended-track', 'closed-context']) {
+    for (const withHandler of [false, true]) {
+      test(`startup ${reason} follows the pending start contract (onError: ${withHandler})`, async () => {
+        env.restore(); env = installBrowser({ workletDelayMs: 50 });
+        const errors = [], logged = [];
+        const log = spyOn(console, 'error').mockImplementation(e => logged.push(e));
+        const stream = new env.MediaStream();
+        if (reason === 'ended-track') stream.getAudioTracks()[0].stop();
+        const d = P.create(withHandler ? { onError: e => errors.push(e) } : {});
+        try {
+          const starting = d.start(stream);
+          const outcome = starting.then(value => ({ value }), error => ({ error }));
+          if (reason === 'closed-context') await env.ctx.close();
+          const result = await outcome;
+          const code = reason === 'ended-track' ? 'mic-ended' : 'processor-error';
+          if (withHandler) {
+            expect(result).toEqual({ value: false });
+            expect(errors.map(e => e.code)).toEqual([code]);
+          } else {
+            expect(result.error).toBeInstanceOf(P.PitchPleaseError);
+            expect(result.error.code).toBe(code);
+          }
+          expect(logged).toEqual([]);
+          expect(d.running).toBe(false);
+          expect(env.ctx.state).toBe('closed');
+          expect(await d.start()).toBe(true);
+        } finally { d.stop(); log.mockRestore(); }
+      });
+    }
+  }
+
+  for (const reason of ['ended-track', 'closed-context']) {
+    test(`startup ${reason} rejects even while worklet loading is hung`, async () => {
+      env.restore(); env = installBrowser({ workletDelayMs: Infinity });
+      const d = P.create();
+      let result;
+      const starting = d.start().then(value => { result = value; }, error => { result = error; });
+      try {
+        await until(() => env.ctx.sources.length > 0);
+        if (reason === 'ended-track') env.ctx.sources[0].stream.getAudioTracks()[0].end();
+        else await env.ctx.close();
+        await until(() => result !== undefined, 500);
+        expect(result).toBeInstanceOf(P.PitchPleaseError);
+        expect(result.code).toBe(reason === 'ended-track' ? 'mic-ended' : 'processor-error');
+        await starting;
+        expectReleased(env);
+      } finally { d.stop(); }
+    });
+  }
+
   for (const model of ['fast', 'fft']) {
     for (const supplied of [false, true]) {
       test(`lifecycle: ended ${supplied ? 'caller' : 'owned'} microphone tears down ${model} once and permits restart`, async () => {

@@ -186,7 +186,8 @@ export interface Detector {
   /**
    * Open the microphone (or use `source`) and start detecting. Call it from a click or key handler; a context that
    * still starts suspended resumes on the next click or key press. An ended audio track stops detection and reports
-   * mic-ended; start() can be called again. Calls made while starting or running share that
+   * mic-ended; stopping all supplied audio tracks is detected within about a second. start() can be called again.
+   * Calls made while starting or running share that
    * outcome; a `source` passed while starting or running is ignored (stop() first). Resolves true once the engine runs, false if start failed (the error went to onError) or stop()
    * cancelled it. Without onError, a failure rejects instead.
    */
@@ -207,7 +208,7 @@ export interface Detector {
   /**
    * A session is started: the engine is installed. Outside a click or key handler the audio context can still be
    * suspended, and frames then wait until it resumes (on the next click or key press). Interruptions attempt resume
-   * and fall back to the next gesture. An ended microphone or externally closed context stops the session.
+   * while listening for the next gesture. An ended microphone or externally closed context stops the session.
    */
   readonly running: boolean;
   /** The selected model. */

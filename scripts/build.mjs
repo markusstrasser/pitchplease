@@ -85,6 +85,7 @@ const THRESHOLD_SOURCES = {
   voice: 'pitchtest/logs/lv19-vpc-maestro_test.log:5 (VPC point: 0.65/0.39)',
 };
 
+// Prepare every output in memory: a later source or validation failure must leave the release intact.
 async function packModels(webDir) {
   const pitchtest = join(webDir, '..');
   const git = (...args) => execFileSync('git', ['-C', pitchtest, ...args], { encoding: 'utf8' }).trim();
@@ -96,6 +97,7 @@ async function packModels(webDir) {
   vendor.models ??= {};
   const { IMPLS } = await import('../engine/kernels.js');
   const kernel = IMPLS.js;
+  const files = new Map(), messages = [];
   for (const [id, dir] of Object.entries(MODEL_SOURCES)) {
     const manifestBytes = readFileSync(join(webDir, dir, 'manifest.json'));
     const weightsBytes = readFileSync(join(webDir, dir, 'weights.bin'));
@@ -124,20 +126,24 @@ async function packModels(webDir) {
     const bytes = packModel(header, data);
     const { dropped, ...source } = header.source;
     vendor.models[id] = { ...source, revision, threshold: model.threshold, thresholdSource: THRESHOLD_SOURCES[id] ?? 'engine/models.js MODELS (no pitchtest operating point found)' };
-    writeFileSync(join(ROOT, 'models', `${id}.bin`), bytes);
-    console.log(`models/${id}.bin  ${bytes.length} bytes (${Math.round(bytes.length / 1024)} KB)  kept ${names.length} tensors, dropped ${header.source.dropped.join(' ') || 'none'}`);
+    files.set(join(ROOT, 'models', `${id}.bin`), bytes);
+    messages.push(`models/${id}.bin  ${bytes.length} bytes (${Math.round(bytes.length / 1024)} KB)  kept ${names.length} tensors, dropped ${header.source.dropped.join(' ') || 'none'}`);
   }
-  writeFileSync(vendorPath, JSON.stringify(vendor, null, 2) + '\n');
+  files.set(vendorPath, JSON.stringify(vendor, null, 2) + '\n');
+  return { files, messages };
 }
 
 if (isMainModule(import.meta.url)) {
   const args = process.argv.slice(2);
   const generatedKernel = kernelSource();
-  if (!args.includes('--check')) writeFileSync(join(ROOT, 'engine/kernels.js'), generatedKernel);
   const bundled = bundleWorklet();
   const problems = await verifyExports(bundled);
   if (problems.length) { for (const p of problems) console.error(`✗ ${p}`); process.exit(1); }
-  const src = bundled.code;
+  // Bundle the regenerated hashes without first writing kernels.js. The bundler removes `export` from declarations.
+  const hashes = generatedKernel.match(/^export (const WASM_SHA256 = \{[^}]*\};)/m)[1];
+  const hashBlock = /^const WASM_SHA256 = \{[^}]*\};/m;
+  if (!hashBlock.test(bundled.code)) throw new Error('engine/worklet.js: missing generated WASM_SHA256 declaration');
+  const src = bundled.code.replace(hashBlock, hashes);
   if (args.includes('--check')) {
     if (readFileSync(join(ROOT, 'engine/kernels.js'), 'utf8') !== generatedKernel) problems.push('engine/kernels.js integrity hashes are stale: run npm run build');
     problems.push(...checkModels());
@@ -147,9 +153,12 @@ if (isMainModule(import.meta.url)) {
     console.log('engine/worklet.js is up to date');
     console.log('models: revisions, payload hashes, thresholds and provenance agree');
   } else {
-    writeFileSync(WORKLET, src);
-    console.log(`engine/worklet.js  ${src.length} bytes`);
     const i = args.indexOf('--models');
-    if (i >= 0) await packModels(args[i + 1] ?? join(PITCHTEST, 'web'));
+    const models = i >= 0 ? await packModels(args[i + 1] ?? join(PITCHTEST, 'web')) : { files: new Map(), messages: [] };
+    const files = new Map([[join(ROOT, 'engine/kernels.js'), generatedKernel], [WORKLET, src], ...models.files]);
+    // All generation and validation succeeded; only now replace release outputs.
+    for (const [path, bytes] of files) writeFileSync(path, bytes);
+    console.log(`engine/worklet.js  ${src.length} bytes`);
+    for (const message of models.messages) console.log(message);
   }
 }

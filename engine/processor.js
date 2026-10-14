@@ -2,8 +2,8 @@
 // bundles this file and its imports into that one self-contained script; edit here, then `npm run build`).
 //
 // processorOptions: { manifest, weights: ArrayBuffer, impl: 'js' | 'wasm', wasmBytes?: ArrayBuffer }
-// Posts { type: 'ready' } once the detector is built, { type: 'frame', t, emit, startedAt, probs } per detector frame,
-// { type: 'stats', cpuLoad, framesPerSecond } every ~0.5 s of audio, and { type: 'error', message } if the detector
+// Posts { type: 'ready', version } once the detector is built, { type: 'frame', t, emit, startedAt, probs } per detector frame,
+// { type: 'stats', cpuLoad, framesPerSecond } every ~0.5 s of audio, and { type: 'error', version, message } if the detector
 // cannot be built or throws.
 // Accepts { type: 'pause', paused } and { type: 'stop' }.
 import { IMPLS } from './kernels.js';
@@ -34,7 +34,7 @@ class PitchPleaseProcessor extends AudioWorkletProcessor {
       this.port.postMessage({ type: 'ready', version: '__PITCHPLEASE_VERSION__' });
     } catch (e) {
       this.alive = false;
-      this.port.postMessage({ type: 'error', message: String(e && e.message || e) });
+      this.port.postMessage({ type: 'error', version: '__PITCHPLEASE_VERSION__', message: String(e && e.message || e) });
     }
   }
 
@@ -49,7 +49,7 @@ class PitchPleaseProcessor extends AudioWorkletProcessor {
       out = this.det.push(this.resampler ? this.resampler.push(ch) : ch);
     } catch (e) {
       this.alive = false;
-      this.port.postMessage({ type: 'error', message: String(e && e.message || e) });
+      this.port.postMessage({ type: 'error', version: '__PITCHPLEASE_VERSION__', message: String(e && e.message || e) });
       return false;
     }
     this.busyMs += clock() - t0;

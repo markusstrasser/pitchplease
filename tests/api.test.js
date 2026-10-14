@@ -11,7 +11,7 @@ import { cpSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { packModel, unpackModel } from '../engine/models.js';
-import { installBrowser } from './helpers/browser.js';
+import { installBrowser, settle } from './helpers/browser.js';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
@@ -181,6 +181,84 @@ describe('self-hosted assets', () => {
       expect(e.message).toContain(P.version);
       expect(e.message).toContain(new URL('../engine/worklet.js', import.meta.url).href);
       expect(e.message).toMatch(/copy engine\/ and models\/ from one release/i);
+      expect(d.running).toBe(false);
+    } finally { d.stop(); browser.restore(); }
+  });
+
+  for (const reportedVersion of ['0.0.0', undefined]) {
+    test(`a worklet reporting version ${reportedVersion} fails before ready as a version mismatch`, async () => {
+      const browser = installBrowser();
+      const Original = globalThis.AudioWorkletNode;
+      const messages = [];
+      globalThis.AudioWorkletNode = class extends Original {
+        constructor(ctx, name, options) {
+          super(ctx, name, { ...options, processorOptions: { ...options.processorOptions, impl: 'missing' } });
+          const port = this.port;
+          this.port = {
+            postMessage: port.postMessage.bind(port),
+            set onmessage(fn) {
+              port.onmessage = fn && (e => {
+                messages.push(e.data);
+                const data = { ...e.data, version: reportedVersion };
+                if (reportedVersion === undefined) delete data.version; // a 3.0.0 worklet has no version
+                fn({ data });
+              });
+            },
+          };
+        }
+      };
+      const d = P.create({ kernel: 'js' });
+      try {
+        const error = await d.start().catch(e => e);
+        expect(messages.map(msg => msg.type)).toEqual(['error']);
+        expect(error.code).toBe('worklet-load-failed');
+        expect(error.message).toContain(String(reportedVersion));
+        expect(error.message).toContain(P.version);
+        expect(error.message).toContain(new URL('../engine/worklet.js', import.meta.url).href);
+        expect(error.message).toMatch(/copy engine\/ and models\/ from one release/i);
+        expect(d.running).toBe(false);
+        expect(browser.state.closed).toBe(1);
+        expect(browser.state.stoppedTracks).toBe(1);
+      } finally { d.stop(); browser.restore(); }
+    });
+  }
+
+  test('a same-version worklet initialization error includes its version and remains processor-error', async () => {
+    const browser = installBrowser();
+    const Original = globalThis.AudioWorkletNode;
+    const messages = [];
+    globalThis.AudioWorkletNode = class extends Original {
+      constructor(ctx, name, options) {
+        super(ctx, name, { ...options, processorOptions: { ...options.processorOptions, impl: 'missing' } });
+        const port = this.port;
+        this.port = {
+          postMessage: port.postMessage.bind(port),
+          set onmessage(fn) { port.onmessage = fn && (e => { messages.push(e.data); fn(e); }); },
+        };
+      }
+    };
+    const d = P.create({ kernel: 'js' });
+    try {
+      const error = await d.start().catch(e => e);
+      expect(messages).toEqual([{ type: 'error', version: P.version, message: "kernel 'missing' is not in this worklet build" }]);
+      expect(error.code).toBe('processor-error');
+      expect(d.running).toBe(false);
+    } finally { d.stop(); browser.restore(); }
+  });
+
+  test('a same-version worklet processing error includes its version and stops detection', async () => {
+    const browser = installBrowser();
+    const errors = [], messages = [];
+    const d = P.create({ kernel: 'js', onError: e => errors.push(e) });
+    try {
+      expect(await d.start()).toBe(true);
+      const node = browser.state.nodes[0], handle = node.port.onmessage;
+      node.port.onmessage = e => { messages.push(e.data); handle(e); };
+      node.processor.det.push = () => { throw new Error('processing failed'); };
+      browser.ctx.render(new Float32Array(browser.ctx.renderSize));
+      await settle();
+      expect(messages).toEqual([{ type: 'error', version: P.version, message: 'processing failed' }]);
+      expect(errors.map(e => e.code)).toEqual(['processor-error']);
       expect(d.running).toBe(false);
     } finally { d.stop(); browser.restore(); }
   });

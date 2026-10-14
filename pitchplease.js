@@ -305,11 +305,17 @@ export function create(options = {}) {
     if (onUpdate && session === s && (eng === s.engine || eng === s.retiring)) call(onUpdate, data());
   }
 
-  // The running engine died in the audio thread: stop, and say why. A replaced engine's death is not reported.
+  // Keep the engine still delivering if its replacement dies before taking over.
   function engineFailed(eng, e) {
     if (eng === session?.retiring) { retire(session); return; }
     if (eng !== session?.engine) return;
-    teardown();
+    const s = session;
+    if (s.retiring) {
+      eng.stop();
+      s.engine = s.retiring;
+      s.retiring = null;
+      if (model === eng.model) model = s.engine.model; // preserve a newer setModel() still loading
+    } else teardown();
     report(e);
   }
 
@@ -378,6 +384,14 @@ export function create(options = {}) {
     };
     node.port.onmessage = (e) => {
       const msg = e.data;
+      if ((msg.type === 'ready' || msg.type === 'error') && msg.version !== version) {
+        const error = new PitchPleaseError('worklet-load-failed',
+          `The worklet from ${resolvedWorkletUrl(options.assetBaseUrl).href} reports version ${msg.version}; ` +
+          `pitchplease.js expects ${version}. Copy engine/ and models/ from one release.`);
+        if (eng.installed) engineFailed(eng, error);
+        else settle(error);
+        return;
+      }
       if (msg.type === 'frame') {
         if (session !== s) return;
         if ((eng !== s.engine && eng !== s.retiring) || paused) return;
@@ -397,13 +411,7 @@ export function create(options = {}) {
           }
         }
       } else if (msg.type === 'ready') {
-        if (msg.version !== version) {
-          const error = new PitchPleaseError('worklet-load-failed',
-            `The worklet from ${resolvedWorkletUrl(options.assetBaseUrl).href} reports version ${msg.version}; ` +
-            `pitchplease.js expects ${version}. Copy engine/ and models/ from one release.`);
-          if (eng.installed) engineFailed(eng, error);
-          else settle(error);
-        } else settle(null);
+        settle(null);
       } else if (msg.type === 'stats') {
         eng.stats.cpuLoad = msg.cpuLoad; eng.stats.framesPerSecond = msg.framesPerSecond;
       } else if (msg.type === 'error') {
@@ -519,6 +527,7 @@ export function create(options = {}) {
   function recoverContext(s) {
     const ctx = s.ctx;
     // A hung resume must not consume the next gesture; each gesture gets another attempt.
+    wakeOnGesture(s);
     within(ctx.resume().catch(() => {}), RESUME_WAIT_MS).then(() => {
       if (session !== s || s.ctx !== ctx) return;
       if (ctx.state === 'running') { s.unwake?.(); s.unwake = null; }
@@ -528,16 +537,21 @@ export function create(options = {}) {
 
   function watchSession(s) {
     const ctx = s.ctx, tracks = Array.from(s.stream.getAudioTracks());
-    const ended = () => {
+    const failed = (error) => {
       if (session !== s) return;
+      const starting = !s.running;
+      if (starting) s.startError = error;
       teardown();
-      report(new PitchPleaseError('mic-ended', 'The microphone audio track ended. Reconnect it or allow microphone access, then call start() again.'));
+      if (starting) s.rejectStart(error);
+      else report(error);
+    };
+    const ended = () => {
+      failed(new PitchPleaseError('mic-ended', 'The microphone audio track ended. Reconnect it or allow microphone access, then call start() again.'));
     };
     const changed = () => {
       if (session !== s) return;
       if (ctx.state === 'closed') {
-        teardown();
-        report(new PitchPleaseError('processor-error', 'The AudioContext was closed. Call start() again to restart detection.'));
+        failed(new PitchPleaseError('processor-error', 'The AudioContext was closed. Call start() again to restart detection.'));
       } else if (ctx.state === 'running') {
         s.unwake?.(); s.unwake = null;
       } else if (!paused && (ctx.state === 'suspended' || ctx.state === 'interrupted')) recoverContext(s);
@@ -545,7 +559,12 @@ export function create(options = {}) {
     // Structural streams from another realm may supply bare track objects; real tracks support these events.
     for (const track of tracks) track.addEventListener?.('ended', ended);
     ctx.addEventListener('statechange', changed);
+    // MediaStreamTrack.stop() changes readyState without dispatching 'ended'.
+    const trackCheck = setInterval(() => {
+      if (tracks.every(track => track.readyState === 'ended')) ended();
+    }, 1000);
     s.unwatch = () => {
+      clearInterval(trackCheck);
       for (const track of tracks) track.removeEventListener?.('ended', ended);
       ctx.removeEventListener('statechange', changed);
     };
@@ -582,7 +601,9 @@ export function create(options = {}) {
     const s = { ctx: null, source: null, stream: null, ownStream: false, engine: null, retiring: null,
       running: false, unwake: null, unwatch: null, started: null, origin: null, pauses: [], lastFrame: null, lastEngine: null };
     session = s;
-    s.started = open(s, input).catch((e) => {
+    const failedStart = new Promise((_, reject) => { s.rejectStart = reject; });
+    s.started = Promise.race([open(s, input), failedStart]).catch((e) => {
+      if (s.startError) { fail(s.startError); return false; }
       if (session !== s) return false; // stop() cancelled this start: nothing to report
       teardown(); // first, so that onError can call start() again
       fail(coded(e));

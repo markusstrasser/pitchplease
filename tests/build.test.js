@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { bundle, verifyExports } from '../scripts/bundle.mjs';
 import { bundleWorklet } from '../scripts/build.mjs';
 import * as build from '../scripts/build.mjs';
-import { MODELS } from '../engine/models.js';
+import { MODELS, unpackModel } from '../engine/models.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -20,7 +20,61 @@ function toy(files) {
 }
 const run = (code) => { const out = {}; new Function('out', code)(out); return out; };
 
+const RELEASE_OUTPUTS = ['engine/worklet.js', 'engine/kernels.js', 'engine/vendor.json', ...Object.keys(build.MODEL_SOURCES).map(id => `models/${id}.bin`)];
+const releaseSnapshot = (root) => Object.fromEntries(RELEASE_OUTPUTS.map(path => [path, readFileSync(join(root, path))]));
+
+function modelBuildFixture() {
+  const root = mkdtempSync(join(tmpdir(), 'pp-model-build-'));
+  for (const name of ['engine', 'models', 'scripts', 'package.json']) cpSync(join(ROOT, name), join(root, name), { recursive: true });
+  // Make generated outputs stale so an early write cannot hide behind identical bytes.
+  writeFileSync(join(root, 'engine/worklet.js'), '// previous release worklet\n');
+  const kernels = join(root, 'engine/kernels.js');
+  const vendor = JSON.parse(readFileSync(join(root, 'engine/vendor.json')));
+  writeFileSync(kernels, readFileSync(kernels, 'utf8').replace(vendor['incport-relaxed.wasm'].sha256, '0'.repeat(64)));
+  const pitchtest = mkdtempSync(join(tmpdir(), 'pp-model-source-'));
+  // Borrow read-only Git metadata solely for source provenance; never stage or commit a fixture.
+  symlinkSync(execFileSync('git', ['-C', ROOT, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).trim(), join(pitchtest, '.git'));
+  for (const [id, dir] of Object.entries(build.MODEL_SOURCES)) {
+    const bytes = readFileSync(join(ROOT, 'models', `${id}.bin`));
+    const { manifest, weights } = unpackModel(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), id);
+    const source = join(pitchtest, 'web', dir);
+    mkdirSync(source, { recursive: true });
+    writeFileSync(join(source, 'manifest.json'), JSON.stringify(manifest));
+    writeFileSync(join(source, 'weights.bin'), Buffer.from(weights));
+  }
+  return { root, pitchtest };
+}
+
+function rebuildModels({ root, pitchtest }) {
+  return execFileSync('node', [join(root, 'scripts/build.mjs'), '--models'], {
+    env: { ...process.env, PITCHTEST: pitchtest, GIT_OPTIONAL_LOCKS: '0' }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
 describe('model release consistency', () => {
+  test.each(['piano', 'voice'])('a %s validation failure leaves every release output untouched', (id) => {
+    const fixture = modelBuildFixture();
+    const weightsFile = join(fixture.pitchtest, 'web', build.MODEL_SOURCES[id], 'weights.bin');
+    const bytes = readFileSync(weightsFile);
+    bytes.writeFloatLE(bytes.readFloatLE(0) + 0.125, 0);
+    writeFileSync(weightsFile, bytes);
+    const before = releaseSnapshot(fixture.root);
+    let failure;
+    try { rebuildModels(fixture); } catch (e) { failure = e; }
+    expect(failure?.status).toBe(1);
+    expect(failure?.stderr).toContain(`${id}: weights revision`);
+    expect(RELEASE_OUTPUTS.filter(path => !readFileSync(join(fixture.root, path)).equals(before[path]))).toEqual([]);
+  }, 15_000);
+
+  test('a successful model rebuild writes the validated models and generated outputs together', () => {
+    const fixture = modelBuildFixture();
+    const before = releaseSnapshot(fixture.root);
+    expect(rebuildModels(fixture)).toContain('models/voice.bin');
+    expect(build.checkModels({ root: fixture.root })).toEqual([]);
+    for (const path of RELEASE_OUTPUTS) expect(readFileSync(join(fixture.root, path)).equals(before[path])).toBe(false);
+    expect(execFileSync('node', [join(fixture.root, 'scripts/build.mjs'), '--check'], { encoding: 'utf8' })).toContain('models: revisions, payload hashes, thresholds and provenance agree');
+  }, 15_000);
+
   test('model rebuild refuses uncommitted exporter/kernel code at the PITCHTEST path', () => {
     const root = mkdtempSync(join(tmpdir(), 'pp-model-build-'));
     for (const name of ['engine', 'models', 'scripts', 'package.json']) cpSync(join(ROOT, name), join(root, name), { recursive: true });

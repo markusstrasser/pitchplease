@@ -130,10 +130,11 @@ const detector = create({
 | `stats` | `{ model, kernel, cpuLoad, framesPerSecond, sampleRate }`. Identifies the engine producing frames, including while a replacement warms up. `cpuLoad` is detector time / audio time, measured in the audio thread (`fft`: on the main thread). |
 
 If a microphone audio track ends (unplugged, revoked access, or a supplied stream's track), the detector stops and
-reports `mic-ended`. Reconnect it or allow access, then call `start()` again. A supplied stream stays under your
+reports `mic-ended`. Calling `stop()` on all audio tracks of a supplied stream is detected within about a second.
+Reconnect it or allow access, then call `start()` again. A supplied stream stays under your
 control; the detector only stops tracks it opened. If another caller closes the AudioContext, detection stops with
-`processor-error`. A suspended or interrupted context attempts to resume, then waits for the next click or key press
-if necessary; `running` stays true and no error is reported.
+`processor-error`. A suspended or interrupted context attempts to resume and listens for the next click or key press
+while that attempt is pending; `running` stays true and no error is reported.
 
 **Notes** (`onNotes`) are `{ midi, name, pitchClass, prob }`, lowest first: `{ midi: 61, name: 'C#4', pitchClass: 1,
 prob: 0.93 }`. `prob` is the model's probability for that key; for `fft` it is the harmonic score (0.5–1].
