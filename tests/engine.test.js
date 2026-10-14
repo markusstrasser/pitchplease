@@ -47,6 +47,14 @@ describe('packed models', () => {
     expect(() => unpackModel(new ArrayBuffer(16))).toThrow(/bad magic/);
   });
 
+  test('a weights file for another model is refused (voice.bin served as piano.bin)', async () => {
+    const dir = mkdtempSync(`${tmpdir()}/pp-swapped-`);
+    writeFileSync(`${dir}/piano.bin`, readFileSync(`${ROOT}models/voice.bin`));
+    const e = await P.analyze(new Float32Array(4800), 48000, { model: 'piano', modelBaseUrl: pathToFileURL(dir + '/') }).catch((x) => x);
+    expect(e.code).toBe('model-load-failed');
+    expect(e.message).toMatch(/holds the 'voice' model, not 'piano'/);
+  });
+
   test('a truncated weights file is refused, not half-loaded', async () => {
     const header = { model: 'x', tensors: { a: { offset: 0, shape: [4] }, b: { offset: 4, shape: [2, 3] } }, const: {} };
     const whole = packModel(header, new Float32Array(10));

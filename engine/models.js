@@ -87,12 +87,14 @@ export function packModel(header, data /* Float32Array */) {
   return bytes;
 }
 
-export function unpackModel(buffer) {
+/** Unpacks a weights file; with `expectedId`, a file that holds another model is refused. */
+export function unpackModel(buffer, expectedId) {
   const bytes = new Uint8Array(buffer);
   if (bytes.length < 8 || new TextDecoder().decode(bytes.subarray(0, 4)) !== MAGIC) throw new Error('not a PitchPlease weights file (bad magic)');
   const n = new DataView(buffer).getUint32(4, true);
   if (8 + n > bytes.length) throw new Error('truncated weights file (the header runs past the end)');
   const header = JSON.parse(new TextDecoder().decode(bytes.subarray(8, 8 + n)));
+  if (expectedId != null && header.model !== expectedId) throw new Error(`the file holds the '${header.model}' model, not '${expectedId}'`);
   const start = (8 + n + 3) & ~3;
   const weights = buffer.slice(start);
   if (weights.byteLength % 4) throw new Error('truncated weights file (not a whole number of floats)');
@@ -111,7 +113,7 @@ export function loadModel(id, modelBaseUrl) {
   const url = modelUrl(id, modelBaseUrl);
   const key = url.href;
   if (!cache.has(key)) {
-    const p = fetchBytes(url).then(unpackModel).catch((e) => {
+    const p = fetchBytes(url).then((buffer) => unpackModel(buffer, id)).catch((e) => {
       cache.delete(key);
       throw new PitchPleaseError('model-load-failed',
         `Could not load the '${id}' model from ${key}: ${e.message}. The package's models/ folder must be served next to engine/; ` +
