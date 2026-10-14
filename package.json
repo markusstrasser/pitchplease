@@ -24,7 +24,7 @@
   "sideEffects": false,
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node scripts/build.mjs --check && bun test",
+    "test": "node scripts/build.mjs --check && bun test --parallel",
     "test:ui": "node tests/ui/run.mjs",
     "vendor": "node scripts/vendor.mjs",
     "dev": "bun dev-testing.js"

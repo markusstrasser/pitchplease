@@ -225,9 +225,11 @@ have not been tested on phones yet; `fast` leaves the most CPU headroom there.
 
 ```bash
 bun dev-testing.js     # demo at http://localhost:3000
-npm test               # checks engine/worklet.js is current, then bun test
-npm run test:ui        # headless Chrome with a fake microphone, all four models, screenshots in tests/ui-shots/
+npm test               # checks engine/worklet.js is current, then bun test --parallel (one worker per test file)
+npm run test:ui        # headless Chrome with a fake microphone: all four models, then retry after a denied mic and
+                       # after a failed model download; screenshots in tests/ui-shots/
 npm run build          # regenerate engine/worklet.js after editing engine/processor.js or the kernel
+npm run vendor -- incport.js   # re-vendor a kernel file from a committed ../pitchtest/web, recording its commit
 ```
 
 `engine/worklet.js` is generated: the worklet must be a single file because bundlers copy it as an asset without its
