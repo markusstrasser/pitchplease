@@ -18,7 +18,7 @@ return { PitchPleaseError };
 // ---- incport.js
 const __m1_incport_js = (() => {
 
-// Vendored from pitchtest web/incport.js @ fea7a7e. Do not edit here: change it upstream, then node scripts/vendor.mjs incport.js
+// Vendored from pitchtest web/incport.js @ fea7a7e1fb5bb4ee91ec2ddc5e55668aacfe4602. Do not edit here: change it upstream, then node scripts/vendor.mjs incport.js
 // Streaming basic-pitch (fine-tuned head R-T-L2-OW-w10L-s0) — dependency-free JS port of
 // pitchtest/bpport.py::IncPort as driven by pitchtest/detectors.py::BPPortStream
 // (lookahead=2, hop=1, cqt_delay=0, refresh=8). The Python is the specification.
@@ -399,7 +399,7 @@ return { parseWeights, createResampler, createDetector };
 // ---- incport-wasm.js
 const __m2_incport_wasm_js = (() => {
 
-// Vendored from pitchtest web/incport-wasm.js @ 78a3dd1. Do not edit here: change it upstream, then node scripts/vendor.mjs incport-wasm.js
+// Vendored from pitchtest web/incport-wasm.js @ 78a3dd19dda521e38904750045842edf38938389. Do not edit here: change it upstream, then node scripts/vendor.mjs incport-wasm.js
 // WASM-SIMD variant of web/incport.js (same API and frame output). The CQT column dot products, the
 // frequency-domain G x U product and the whole head (c1 -> cr -> c2(+s2) -> c3) run in web/incport.wasm
 // (built by web/wasm/build.sh; raw module, no imports). Orchestration, FFTs, octaves and resampler stay JS.

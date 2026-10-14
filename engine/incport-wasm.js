@@ -1,4 +1,4 @@
-// Vendored from pitchtest web/incport-wasm.js @ 78a3dd1. Do not edit here: change it upstream, then node scripts/vendor.mjs incport-wasm.js
+// Vendored from pitchtest web/incport-wasm.js @ 78a3dd19dda521e38904750045842edf38938389. Do not edit here: change it upstream, then node scripts/vendor.mjs incport-wasm.js
 // WASM-SIMD variant of web/incport.js (same API and frame output). The CQT column dot products, the
 // frequency-domain G x U product and the whole head (c1 -> cr -> c2(+s2) -> c3) run in web/incport.wasm
 // (built by web/wasm/build.sh; raw module, no imports). Orchestration, FFTs, octaves and resampler stay JS.

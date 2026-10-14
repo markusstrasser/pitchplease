@@ -1,4 +1,4 @@
-// Vendored from pitchtest web/incport.js @ fea7a7e. Do not edit here: change it upstream, then node scripts/vendor.mjs incport.js
+// Vendored from pitchtest web/incport.js @ fea7a7e1fb5bb4ee91ec2ddc5e55668aacfe4602. Do not edit here: change it upstream, then node scripts/vendor.mjs incport.js
 // Streaming basic-pitch (fine-tuned head R-T-L2-OW-w10L-s0) — dependency-free JS port of
 // pitchtest/bpport.py::IncPort as driven by pitchtest/detectors.py::BPPortStream
 // (lookahead=2, hop=1, cqt_delay=0, refresh=8). The Python is the specification.

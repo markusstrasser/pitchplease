@@ -2,7 +2,8 @@
 // the generated worklet against its sources, and the model metadata. analyze() against the kernel: tests/parity/.
 import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as P from '../pitchplease.js';
@@ -76,8 +77,30 @@ describe('vendored kernel and generated worklet', () => {
   test('vendored files match engine/vendor.json (sha256, header commit)', () => {
     expect(checkVendored({ upstream: false }).problems).toEqual([]);
   });
-  test.skipIf(!HAVE_SOURCE)('vendored files are byte-identical to ../pitchtest/web (skipped without that checkout)', () => {
+  test.skipIf(!HAVE_SOURCE)('vendored files equal ../pitchtest at their recorded commits (skipped without that checkout)', () => {
     expect(checkVendored({ upstream: true }).problems).toEqual([]);
+  });
+  test('the drift check reads the recorded commit: upstream edits are notes, edited copies are problems', () => {
+    const git = (dir, ...a) => execFileSync('git', ['-C', dir, '-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { encoding: 'utf8' }).trim();
+    const pt = mkdtempSync(`${tmpdir()}/pp-pt-`), pp = mkdtempSync(`${tmpdir()}/pp-pp-`);
+    mkdirSync(`${pt}/web`); mkdirSync(`${pp}/engine`);
+    git(pt, 'init', '-q');
+    writeFileSync(`${pt}/web/k.js`, 'export const k = 1;\n');
+    git(pt, 'add', 'web/k.js'); git(pt, 'commit', '-qm', 'k');
+    const commit = git(pt, 'rev-parse', 'HEAD');
+    const src = readFileSync(`${pt}/web/k.js`);
+    writeFileSync(`${pp}/engine/k.js`, `// Vendored from pitchtest web/k.js @ ${commit}. Do not edit here.\n${src}`);
+    writeFileSync(`${pp}/engine/vendor.json`, JSON.stringify({ 'k.js': { from: 'web/k.js', commit, sha256: sha256(src) } }));
+    const check = () => checkVendored({ root: pp, pitchtest: pt });
+    expect(check()).toEqual({ problems: [], notes: [], upstream: true });
+    writeFileSync(`${pt}/web/k.js`, 'export const k = 2; // a research edit\n'); // uncommitted upstream edit
+    expect(check().problems).toEqual([]);
+    expect(check().notes.join()).toMatch(/uncommitted edits/);
+    git(pt, 'commit', '-qam', 'k2'); // upstream moved on
+    expect(check().problems).toEqual([]);
+    expect(check().notes.join()).toMatch(/web\/k.js changed in \w{7} since/);
+    writeFileSync(`${pp}/engine/k.js`, `// Vendored from pitchtest web/k.js @ ${commit}. Do not edit here.\nexport const k = 3;\n`);
+    expect(check().problems.join()).toMatch(/edited after vendoring/);
   });
   test('engine/worklet.js is up to date with its sources (npm run build)', () => {
     expect(readFileSync(`${ROOT}engine/worklet.js`, 'utf8')).toBe(workletSource());

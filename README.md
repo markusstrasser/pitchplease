@@ -268,7 +268,8 @@ npm run vendor -- incport-wasm.js incport.wasm   # re-vendor kernel files from a
 `engine/worklet.js` is generated: the worklet must be a single file because bundlers copy it as an asset without its
 imports. The detector kernels (JavaScript, and WebAssembly SIMD in a plain and a relaxed-SIMD build) are chosen in one
 place, `engine/kernels.js`. They are vendored from pitchtest; `engine/vendor.json` records each file's source commit
-and hash, and the tests compare the copies with `../pitchtest/web` when it is checked out.
+and hash, and when `../pitchtest` is checked out the tests compare each copy with that file at its recorded commit
+(edits in pitchtest's working tree or newer commits only print a note).
 
 ## License
 
