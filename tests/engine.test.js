@@ -6,6 +6,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import * as P from '../pitchplease.js';
 import { unpackModel, packModel, modelUrl } from '../engine/models.js';
+import { CHOICES } from '../engine/kernels.js';
 import { MODEL_SOURCES, workletSource } from '../scripts/build.mjs';
 import { checkVendored } from '../scripts/vendor.mjs';
 import { HAVE_SOURCE, PITCHTEST_WEB, refKernel, refWeights } from './helpers/parity.js';
@@ -104,5 +105,11 @@ describe('model metadata', () => {
     const m = /type ModelId = ([^;]+);/.exec(dts);
     expect(m).not.toBeNull();
     expect(m[1].split('|').map((s) => s.trim().replace(/'/g, ''))).toEqual(P.models.map((x) => x.id));
+  });
+  test('the type declarations list every kernel choice', () => {
+    const dts = readFileSync(`${ROOT}pitchplease.d.ts`, 'utf8');
+    const m = /type KernelId = ([^;]+);/.exec(dts);
+    expect(m).not.toBeNull();
+    expect(m[1].split('|').map((s) => s.trim().replace(/'/g, ''))).toEqual(['auto', ...CHOICES.map((c) => c.id)]);
   });
 });

@@ -12,7 +12,8 @@
 //   1. npm run vendor -- incport-wasm.js incport.wasm incport-relaxed.wasm   (copies them, records the commit)
 //   2. uncomment the wasmKernel import and its IMPLS entry below
 //   3. uncomment the two CHOICES entries (one per .wasm build, best first, each with the feature probe it needs)
-//   4. npm run build (regenerates engine/worklet.js), npm test (parity runs every supported choice), npm run test:ui
+//   4. add their ids to KernelId in pitchplease.d.ts (a test compares the two)
+//   5. npm run build (regenerates engine/worklet.js), npm test (parity runs every supported choice), npm run test:ui
 // The kernel module must stay bundler-safe: no import('node:…') and only literal `new URL('./x', import.meta.url)`.
 import { PitchPleaseError } from './errors.js';
 import * as jsKernel from './incport.js';

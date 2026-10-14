@@ -4,7 +4,7 @@
 /** 'fast' (default), 'piano' and 'voice' are trained detectors; 'fft' is the v2 FFT peak picker. */
 export type ModelId = 'fast' | 'piano' | 'voice' | 'fft';
 
-/** Detector kernel: 'auto' picks the fastest one this runtime supports. */
+/** Detector kernel: 'auto' picks the fastest one this runtime supports. Lists engine/kernels.js CHOICES (tested). */
 export type KernelId = 'auto' | 'js';
 
 export interface Chord {
@@ -133,8 +133,8 @@ export type AnalyzeOptions = CommonOptions;
 export interface Stats {
   /** The model producing frames now. */
   model: ModelId;
-  /** The kernel running the trained model ('js'), null for 'fft'. */
-  kernel: string | null;
+  /** The kernel running the trained model (what 'auto' picked), null for 'fft'. */
+  kernel: Exclude<KernelId, 'auto'> | null;
   /** Detector compute time / audio time, measured in the audio thread (0.5 = half the real-time budget). */
   cpuLoad: number;
   framesPerSecond: number;
