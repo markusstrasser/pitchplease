@@ -5,6 +5,7 @@ import { createTracker } from '../engine/tracker.js';
 import { createResampler } from '../engine/resample.js';
 import { CHOICES, RELAXED_SIMD_PROBE, SIMD_PROBE, kernelSupported, pickKernel } from '../engine/kernels.js';
 import { resolveKernel } from '../engine/kernel-load.js';
+import { modelUrl } from '../engine/models.js';
 import { readWav } from './helpers/wav.js';
 
 const { samples: CHORD } = readWav(new URL('./fixtures/chord-a-major.wav', import.meta.url).pathname);
@@ -62,6 +63,63 @@ describe('analyze()', () => {
     expect(await code(P.analyze(CHORD, 0))).toBe('bad-input');
     expect(await code(P.analyze(CHORD, 48000, { model: 'loud' }))).toBe('unknown-model');
     expect(await code(P.analyze(CHORD, 48000, { modelBaseUrl: 'file:///nonexistent-pp/' }))).toBe('model-load-failed');
+    expect(await code(P.analyze(new DataView(new ArrayBuffer(8)), 48000))).toBe('bad-input');
+    expect(await code(P.analyze(new ArrayBuffer(8), 48000))).toBe('bad-input');
+  });
+
+  test('any array-like of numbers is accepted', async () => {
+    const like = { length: 4800 };
+    for (let i = 0; i < 4800; i++) like[i] = Math.sin(i / 10);
+    expect((await P.analyze(like, 48000)).length).toBeGreaterThan(5);
+    expect((await P.analyze(Array.from(like), 48000)).length).toBeGreaterThan(5);
+  });
+
+  test('an unexpected failure is still a PitchPleaseError: internal-error, with the cause', async () => {
+    const boom = new Error('boom');
+    const e = await P.analyze({ getChannelData() { throw boom; }, numberOfChannels: 1, sampleRate: 48000, length: 10 }).catch((x) => x);
+    expect(e).toBeInstanceOf(P.PitchPleaseError);
+    expect(e.code).toBe('internal-error');
+    expect(e.cause).toBe(boom);
+  });
+
+  test("the 'fft' model yields to the event loop on long input", async () => {
+    let ticks = 0;
+    const timer = setInterval(() => ticks++, 5);
+    const frames = await P.analyze(new Float32Array(48000 * 4), 48000, { model: 'fft' });
+    clearInterval(timer);
+    expect(frames.length).toBe(240); // 60 analysis frames per second of audio
+    expect(ticks).toBeGreaterThan(0);
+  }, 60_000);
+});
+
+describe('options are checked up front', () => {
+  const thrown = (fn) => { try { fn(); return 'ok'; } catch (e) { return `${e.code}: ${e.message}`; } };
+  test('fft sizes', () => {
+    expect(thrown(() => P.create({ fftSize: 1000 }))).toMatch(/^bad-options: fftSize must be a power of two/);
+    expect(thrown(() => P.create({ fftSize: 65536 }))).toMatch(/^bad-options/);
+    expect(thrown(() => P.create({ binCount: 0 }))).toMatch(/^bad-options: binCount/);
+    expect(thrown(() => P.create({ fftSize: 1024, binCount: 513 }))).toMatch(/^bad-options: binCount must be .* \(512\)/);
+    expect(thrown(() => P.create({ model: 'fft', fftSize: 1024 }))).toBe('ok'); // binCount defaults within range
+  });
+
+  test('a threshold must suit every model, since setModel() can switch to any', () => {
+    expect(thrown(() => P.create({ threshold: { off: 0.65 } }))).toMatch(/^bad-threshold: .*for 'piano': on 0.6, off 0.65.*Give `on` as well/);
+    expect(thrown(() => P.create({ threshold: { on: 0.8, off: 0.65 } }))).toBe('ok');
+    expect(thrown(() => P.create({ threshold: 0.5 }))).toMatch(/^bad-threshold: threshold must be an object/);
+  });
+
+  test('kernel: null means auto', async () => {
+    expect(thrown(() => P.create({ kernel: null }))).toBe('ok');
+    expect((await P.analyze(CHORD.subarray(0, 4800), 48000, { kernel: null })).length).toBeGreaterThan(5);
+  });
+
+  test('modelBaseUrl: a folder, with or without a slash, keeping a query; a bad one fails at create()', () => {
+    expect(modelUrl('fast', 'https://cdn.example/models').href).toBe('https://cdn.example/models/fast.bin');
+    expect(modelUrl('fast', 'https://cdn.example/models/').href).toBe('https://cdn.example/models/fast.bin');
+    expect(modelUrl('voice', 'https://cdn.example/models?v=3').href).toBe('https://cdn.example/models/voice.bin?v=3');
+    expect(modelUrl('piano', new URL('file:///srv/pp/')).href).toBe('file:///srv/pp/piano.bin');
+    expect(thrown(() => P.create({ modelBaseUrl: 'models/' }))).toMatch(/^bad-options: modelBaseUrl 'models\/' is not a URL here: outside a browser it must be absolute/);
+    expect(thrown(() => P.create({ modelBaseUrl: '' }))).toMatch(/^bad-options/);
   });
 });
 

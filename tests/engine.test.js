@@ -2,8 +2,9 @@
 // the generated worklet against its sources, and the model metadata. analyze() against the kernel: tests/parity/.
 import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { readFileSync, statSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as P from '../pitchplease.js';
 import { unpackModel, packModel, modelUrl } from '../engine/models.js';
 import { CHOICES } from '../engine/kernels.js';
@@ -44,6 +45,22 @@ describe('packed models', () => {
       expect(Array.from(new Float32Array(u.weights))).toEqual(Array.from(data));
     }
     expect(() => unpackModel(new ArrayBuffer(16))).toThrow(/bad magic/);
+  });
+
+  test('a truncated weights file is refused, not half-loaded', async () => {
+    const header = { model: 'x', tensors: { a: { offset: 0, shape: [4] }, b: { offset: 4, shape: [2, 3] } }, const: {} };
+    const whole = packModel(header, new Float32Array(10));
+    expect(() => unpackModel(whole.buffer)).not.toThrow();
+    expect(() => unpackModel(whole.buffer.slice(0, whole.length - 8))).toThrow(/tensor 'b' ends at float 10, the file holds 8/);
+    expect(() => unpackModel(whole.buffer.slice(0, whole.length - 2))).toThrow(/not a whole number of floats/);
+    expect(() => unpackModel(whole.buffer.slice(0, 20))).toThrow(/header runs past the end/);
+    // and through the loader: the shipped fast.bin minus its last 2000 floats
+    const dir = mkdtempSync(`${tmpdir()}/pp-truncated-`);
+    const fast = readFileSync(`${ROOT}models/fast.bin`);
+    writeFileSync(`${dir}/fast.bin`, fast.subarray(0, fast.length - 8000));
+    const e = await P.analyze(new Float32Array(4800), 48000, { modelBaseUrl: pathToFileURL(dir + '/') }).catch((x) => x);
+    expect(e.code).toBe('model-load-failed');
+    expect(e.message).toMatch(/truncated weights file: tensor/);
   });
 });
 
@@ -105,6 +122,18 @@ describe('model metadata', () => {
     const m = /type ModelId = ([^;]+);/.exec(dts);
     expect(m).not.toBeNull();
     expect(m[1].split('|').map((s) => s.trim().replace(/'/g, ''))).toEqual(P.models.map((x) => x.id));
+  });
+  test('every error code the code raises is declared and documented', () => {
+    const dts = readFileSync(`${ROOT}pitchplease.d.ts`, 'utf8');
+    const declared = new Set([.../type ErrorCode =([^;]+);/.exec(dts)[1].matchAll(/'([\w-]+)'/g)].map((x) => x[1]));
+    const readme = readFileSync(`${ROOT}README.md`, 'utf8');
+    const sources = ['pitchplease.js', ...readdirSync(`${ROOT}engine`).filter((f) => f.endsWith('.js')).map((f) => `engine/${f}`)];
+    const raised = new Set(sources.flatMap((f) => [...readFileSync(`${ROOT}${f}`, 'utf8').matchAll(/new PitchPleaseError\('([\w-]+)'/g)].map((x) => x[1])));
+    expect(raised.size).toBeGreaterThan(15);
+    for (const code of raised) {
+      expect([code, declared.has(code)]).toEqual([code, true]);
+      expect([code, readme.includes(`\`${code}\``)]).toEqual([code, true]);
+    }
   });
   test('the type declarations list every kernel choice', () => {
     const dts = readFileSync(`${ROOT}pitchplease.d.ts`, 'utf8');

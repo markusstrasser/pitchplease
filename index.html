@@ -190,6 +190,10 @@
         $('error').textContent = `${e.message} (${e.code})`;
         $('error').classList.add('show');
         console.warn(e);
+        if (!detector.running) { // start failed, or the detector stopped: offer to start again
+          $('start').textContent = 'Try again';
+          $('overlay').classList.remove('hidden');
+        }
       },
     });
     window.pitchplease = detector; // for poking at from the console
@@ -220,10 +224,6 @@
       $('overlay').classList.add('hidden');
       $('error').classList.remove('show');
       await detector.start();
-      if (!detector.running) { // start failed (onError showed why): offer to try again
-        $('start').textContent = 'Try again';
-        $('overlay').classList.remove('hidden');
-      }
     };
     const pauseBtn = $('pause');
     function togglePause() {

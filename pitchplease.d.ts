@@ -32,7 +32,10 @@ export interface Note {
 }
 
 export interface Frame {
-  /** Seconds into the audio (since start(), or since the first sample for analyze()). */
+  /**
+   * analyze(): seconds into the input. Live: seconds of audio the current engine has analysed, pauses left out; it
+   * starts again near 0 when setModel() switches engines.
+   */
   time: number;
   /** Stream time (s) at which this frame became available; emitTime - time is the detector's own latency. */
   emitTime: number;
@@ -99,19 +102,25 @@ export interface ModelInfo {
 export interface CommonOptions {
   /** Which detector to run (default 'fast'). See `models`. */
   model?: ModelId;
-  /** Override the trained models' on/off probabilities. Given only `on`, off = 0.6 * on. Ignored by 'fft'. */
+  /**
+   * Override the trained models' on/off probabilities. Given only `on`, off = 0.6 * on; given only `off`, each
+   * model's own `on` applies. It must suit every trained model, since setModel() can switch to any. Ignored by 'fft'.
+   */
   threshold?: Partial<Threshold>;
-  /** Folder that holds fast.bin, piano.bin and voice.bin, if you host the weights yourself (a string or a URL). */
+  /**
+   * Folder that holds fast.bin, piano.bin and voice.bin, if you host the weights yourself (a string or a URL; a
+   * query such as ?v=3 is kept). Outside a browser it must be absolute.
+   */
   modelBaseUrl?: string | { readonly href: string };
-  /** Detector kernel (default 'auto'). */
+  /** Detector kernel (default 'auto'; under 'auto', a WASM kernel that fails falls back to JavaScript). */
   kernel?: KernelId;
   /** Frames the pitch-class set must hold before a chord is named (default 1 for trained models, 4 for 'fft'). */
   stabilityFrames?: number;
   /** ms with no notes before the held chord clears (default 200). */
   clearAfterMs?: number;
-  /** 'fft' only: FFT size (default 16384). */
+  /** 'fft' only: FFT size, a power of two from 32 to 32768 (default 16384). */
   fftSize?: number;
-  /** 'fft' only: spectrum bins analysed (default 500). */
+  /** 'fft' only: spectrum bins analysed, 1 to fftSize / 2 (default 500, or fftSize / 2 if smaller). */
   binCount?: number;
 }
 
@@ -124,7 +133,10 @@ export interface Options extends CommonOptions {
   onChordEnd?: () => void;
   /** v2's per-frame callback. */
   onUpdate?: (data: UpdateData) => void;
-  /** Receives every error. Without it, start() and setModel() reject instead. */
+  /**
+   * Receives every error, always a PitchPleaseError (an unexpected one has code 'internal-error' and the original as
+   * `cause`). Without it, start() and setModel() reject instead, and errors after start() go to console.error.
+   */
   onError?: (error: PitchPleaseError) => void;
 }
 
@@ -142,9 +154,10 @@ export interface Stats {
   sampleRate: number;
 }
 
-/** Anything with a MediaStream's track list, e.g. a browser MediaStream. */
+/** A browser MediaStream, also one from another frame. It needs an audio track. */
 export interface MediaStreamLike {
   getTracks(): ArrayLike<{ stop(): void }>;
+  getAudioTracks(): ArrayLike<unknown>;
 }
 
 /** A Web Audio AudioBuffer, or anything shaped like one. */
@@ -156,13 +169,20 @@ export interface AudioBufferLike {
 }
 
 export interface Detector {
-  /** Open the microphone (or use `source`) and start detecting. Call it from a click or key handler. */
+  /**
+   * Open the microphone (or use `source`) and start detecting. Call it from a click or key handler; a context that
+   * still starts suspended resumes on the next click or key press. Calls made while starting or running share that
+   * outcome. Resolves once detecting (with onError, also once a failure went there); rejects on failure otherwise.
+   */
   start(source?: MediaStreamLike): Promise<void>;
-  /** Stop detecting and release the microphone. start() works again afterwards. */
+  /** Stop detecting, release the microphone and clear the pause. A start() still opening is cancelled quietly. */
   stop(): void;
   /** Pause or resume; returns the new paused state. */
   togglePause(): boolean;
-  /** Switch models while running, without asking for the microphone again. Before start(), it preloads the weights. */
+  /**
+   * Switch models while running, without asking for the microphone again: the new model takes over once it runs; if
+   * it cannot, the old one keeps running and the error is reported. Before start(), it selects and preloads.
+   */
   setModel(id: ModelId): Promise<void>;
   readonly paused: boolean;
   readonly running: boolean;
@@ -176,9 +196,10 @@ export type ErrorCode =
   | 'unknown-kernel' | 'kernel-unsupported' | 'kernel-load-failed'
   | 'no-web-audio' | 'insecure-context' | 'no-microphone-api' | 'worklet-unsupported' | 'worklet-load-failed'
   | 'mic-denied' | 'mic-not-found' | 'mic-busy' | 'mic-failed'
-  | 'model-load-failed' | 'processor-error';
+  | 'model-load-failed' | 'processor-error' | 'internal-error';
 
 export class PitchPleaseError extends Error {
+  constructor(code: ErrorCode, message: string, options?: { cause?: unknown });
   readonly name: 'PitchPleaseError';
   /** Stable machine-readable reason; `message` says what to do about it. */
   readonly code: ErrorCode;
@@ -187,7 +208,10 @@ export class PitchPleaseError extends Error {
 /** A live detector. Nothing is downloaded or opened until start(). Throws a PitchPleaseError on invalid options. */
 export function create(options?: Options): Detector;
 
-/** Detect notes in recorded audio, in the browser or Node. Any sample rate (48 kHz and 22.05 kHz need no resampling). */
+/**
+ * Detect notes in recorded audio, in the browser or Node: a Float32Array (or any array of numbers) with its sample
+ * rate, or an AudioBuffer. Any sample rate (48 kHz and 22.05 kHz need no resampling). Rejects with a PitchPleaseError.
+ */
 export function analyze(samples: Float32Array | ArrayLike<number>, sampleRate: number, options?: AnalyzeOptions): Promise<Frame[]>;
 export function analyze(buffer: AudioBufferLike, options?: AnalyzeOptions): Promise<Frame[]>;
 

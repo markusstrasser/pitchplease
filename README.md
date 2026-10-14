@@ -87,21 +87,22 @@ const detector = create({
   onChordEnd() {},           // the held chord cleared after clearAfterMs of silence
   onUpdate(data) {},         // v2's per-frame payload (see below)
   onError(err) {},           // every error; without it, start() and setModel() reject instead
-  threshold: { on, off },    // trained models: override the operating point (only `on` given: off = 0.6 * on)
+  threshold: { on, off },    // trained models: override the operating point (only `on` given: off = 0.6 * on);
+                             // it must suit all three, since setModel() can switch to any
   clearAfterMs: 200,         // silence before the held chord clears
   stabilityFrames: 1,        // frames the pitch-class set must hold before a chord is named (fft default: 4)
   modelBaseUrl: undefined,   // a folder holding fast.bin, piano.bin, voice.bin if you host the weights yourself
   kernel: 'auto',            // detector kernel; 'auto' picks the fastest this browser supports
-  fftSize: 16384,            // 'fft' only
+  fftSize: 16384,            // 'fft' only: a power of two from 32 to 32768
 });
 ```
 
 | detector | |
 |---|---|
-| `await start(stream?)` | Opens the microphone (raw: no echo cancellation, noise suppression or gain control) or uses the `MediaStream` you pass. Downloads the model while the permission prompt shows. |
-| `stop()` | Stops and releases the microphone (a stream you passed is left running). `start()` works again. |
+| `await start(stream?)` | Opens the microphone (raw: no echo cancellation, noise suppression or gain control) or uses the `MediaStream` you pass. Downloads the model while the permission prompt shows. Resolves once detecting; a second call while starting or running shares that outcome. |
+| `stop()` | Stops, releases the microphone (a stream you passed is left running) and clears the pause. A `start()` still opening is cancelled quietly. `start()` works again. |
 | `togglePause()` | Pauses or resumes; returns the new paused state. |
-| `await setModel(id)` | Swaps models while running: the new model starts, then the old one stops; the mic stays open. Before `start()`, it selects the model and preloads its weights. |
+| `await setModel(id)` | Swaps models while running: the new model takes over once it runs in the audio thread, then the old one stops; the mic stays open. If the new model fails, the old one keeps running and the error is reported. Before `start()`, it selects the model and preloads its weights. |
 | `model`, `running`, `paused` | Current state. |
 | `stats` | `{ model, kernel, cpuLoad, framesPerSecond, sampleRate }`. `cpuLoad` is detector time / audio time, measured in the audio thread (`fft`: on the main thread). |
 
@@ -112,7 +113,8 @@ prob: 0.93 }`. `prob` is the model's probability for that key; for `fft` it is t
 
 ```js
 {
-  time,          // seconds into the audio
+  time,          // analyze(): seconds into the input; live: seconds this engine has analysed (pauses left out,
+                 // starts again near 0 when setModel() switches)
   emitTime,      // when the frame became available; emitTime - time = the detector's own latency
   probs,         // Float32Array(88): every key's probability, A0 (index 0) to C8 (index 87); null for 'fft'
   notes,         // the keys that are on
@@ -156,12 +158,14 @@ Errors are `PitchPleaseError`s with a stable `code` and a message that says what
 |---|---|
 | `mic-denied`, `mic-not-found`, `mic-busy`, `mic-failed` | the microphone could not be opened |
 | `insecure-context` | the page is not on https:// or localhost |
+| `no-microphone-api` | the browser has no `getUserMedia` (pass a `MediaStream` to `start(stream)`) |
 | `worklet-unsupported` | no AudioWorklet in this browser (use `model: 'fft'`) |
 | `model-load-failed` | the weights could not be fetched (check that `models/` is served, or set `modelBaseUrl`) |
 | `worklet-load-failed` | `engine/worklet.js` could not be loaded |
-| `processor-error` | the detector stopped in the audio thread |
+| `processor-error` | the detector could not be built, or stopped, in the audio thread; the detector stops (call `start()` again) |
 | `no-web-audio` | `start()` outside a browser (use `analyze()`) |
 | `unknown-model`, `bad-threshold`, `bad-options`, `bad-input`, `bad-source`, `unknown-kernel`, `kernel-unsupported`, `kernel-load-failed` | invalid arguments or kernel problems |
+| `internal-error` | anything unexpected; the original error is `err.cause` |
 
 ### Utilities
 

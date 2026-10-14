@@ -520,8 +520,9 @@ const { createResampler } = __m3_resample_js;
 // bundles this file and its imports into that one self-contained script; edit here, then `npm run build`).
 //
 // processorOptions: { manifest, weights: ArrayBuffer, impl: 'js' | 'wasm', wasmBytes?: ArrayBuffer }
-// Posts { type: 'frame', t, emit, probs } per detector frame, { type: 'stats', cpuLoad, framesPerSecond } every
-// ~0.5 s of audio, and { type: 'error', message } if the detector cannot be built or throws.
+// Posts { type: 'ready' } once the detector is built, { type: 'frame', t, emit, probs } per detector frame,
+// { type: 'stats', cpuLoad, framesPerSecond } every ~0.5 s of audio, and { type: 'error', message } if the detector
+// cannot be built or throws.
 // Accepts { type: 'pause', paused } and { type: 'stop' }.
 
 
@@ -547,6 +548,7 @@ class PitchPleaseProcessor extends AudioWorkletProcessor {
       const direct = sampleRate === 48000 || sampleRate === 22050;
       this.resampler = direct ? null : createResampler(sampleRate, 22050);
       this.det = kernel.createDetector(kernel.parseWeights(manifest, weights), { inputRate: direct ? sampleRate : 22050, wasmModule: wasmBytes });
+      this.port.postMessage({ type: 'ready' });
     } catch (e) {
       this.alive = false;
       this.port.postMessage({ type: 'error', message: String(e && e.message || e) });

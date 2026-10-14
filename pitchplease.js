@@ -10,7 +10,7 @@
  */
 import { PitchPleaseError } from './engine/errors.js';
 import { NOTE_NAMES, midiToNote, pitchClassToColor, matchChord, createChordHold } from './engine/music.js';
-import { MODELS, getModel, loadModel } from './engine/models.js';
+import { MODELS, getModel, loadModel, modelUrl } from './engine/models.js';
 import { createTracker, KEY_COUNT, LOWEST_MIDI } from './engine/tracker.js';
 import { fftConfig, startFftEngine, fftNotes, analyzeFftOffline } from './engine/fft.js';
 import { pickKernel } from './engine/kernels.js';
@@ -27,8 +27,10 @@ const KEY_MIDIS = Float32Array.from({ length: KEY_COUNT }, (_, k) => k + LOWEST_
 const NO_PEAKS = new Float32Array(0);
 const ANALYZE_CHUNK = 128; // samples per push, as one Web Audio render quantum
 const ANALYZE_TAIL_SECONDS = 0.25; // zeros appended so the last frames of the input are emitted
+const RESUME_WAIT_MS = 200; // start() waits this long for the context to resume, then builds the engine anyway
+const READY_WAIT_MS = 2000; // a new worklet engine has this long to report its detector built; later failures stop it
 
-// ============ OPTIONS ============
+// ============ OPTIONS AND ERRORS ============
 
 function resolveThreshold(model, t) {
   if (!model.threshold) return null;
@@ -36,20 +38,34 @@ function resolveThreshold(model, t) {
   const on = t.on ?? model.threshold.on;
   const off = t.off ?? (t.on != null ? on * 0.6 : model.threshold.off);
   if (!(on > 0 && on < 1 && off > 0 && off <= on)) {
-    throw new PitchPleaseError('bad-threshold', `threshold must satisfy 0 < off <= on < 1 (got on ${on}, off ${off}).`);
+    throw new PitchPleaseError('bad-threshold', `threshold must satisfy 0 < off <= on < 1 (for '${model.id}': on ${on}, off ${off}).` +
+      (t.on == null ? ' Give `on` as well.' : ''));
   }
   return { on, off };
 }
 
+const isPowerOfTwo = (n) => Number.isInteger(n) && n > 0 && (n & (n - 1)) === 0;
+
 function checkOptions(o) {
   if (o === null || typeof o !== 'object') throw new PitchPleaseError('bad-options', 'Options must be an object.');
   const m = getModel(o.model ?? 'fast');
-  if (o.threshold != null) resolveThreshold(getModel('fast'), o.threshold);
+  if (o.threshold != null) {
+    if (typeof o.threshold !== 'object') throw new PitchPleaseError('bad-threshold', 'threshold must be an object: { on, off }.');
+    for (const x of MODELS) resolveThreshold(x, o.threshold); // setModel() may switch to any of them
+  }
   if (o.stabilityFrames != null && !(Number.isInteger(o.stabilityFrames) && o.stabilityFrames >= 1)) {
     throw new PitchPleaseError('bad-options', 'stabilityFrames must be a whole number >= 1.');
   }
   if (o.clearAfterMs != null && !(o.clearAfterMs >= 0)) throw new PitchPleaseError('bad-options', 'clearAfterMs must be >= 0.');
+  if (o.fftSize != null && !(isPowerOfTwo(o.fftSize) && o.fftSize >= 32 && o.fftSize <= 32768)) {
+    throw new PitchPleaseError('bad-options', 'fftSize must be a power of two from 32 to 32768.');
+  }
+  const bins = (o.fftSize ?? 16384) / 2;
+  if (o.binCount != null && !(Number.isInteger(o.binCount) && o.binCount >= 1 && o.binCount <= bins)) {
+    throw new PitchPleaseError('bad-options', `binCount must be a whole number from 1 to fftSize / 2 (${bins}).`);
+  }
   pickKernel(o.kernel ?? 'auto'); // throws on an unknown kernel
+  if (o.modelBaseUrl != null) modelUrl('fast', o.modelBaseUrl); // throws on a URL that cannot be resolved here
   return m;
 }
 
@@ -58,6 +74,13 @@ const trackerOptions = (o, model) => ({
   stabilityFrames: o.stabilityFrames ?? 1, // the trained models' hysteresis already steadies the keys
   clearAfterMs: o.clearAfterMs ?? 200,
 });
+
+/** Every error PitchPlease reports is a PitchPleaseError: anything unexpected becomes 'internal-error' with its cause. */
+function coded(e) {
+  if (e instanceof PitchPleaseError) return e;
+  const what = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+  return new PitchPleaseError('internal-error', `Unexpected error (${what}). The original error is the cause.`, { cause: e });
+}
 
 // ============ FRAMES ============
 
@@ -94,8 +117,13 @@ function mixdown(buffer) {
   return out;
 }
 
-const yieldToEventLoop = () => new Promise((r) => setTimeout(r, 0));
 const now = () => (globalThis.performance ?? Date).now();
+
+/** Returns a function that, every `ms` of busy time, gives back a promise that yields to the event loop (else null). */
+function pacer(ms = 50) {
+  let last = now();
+  return () => (now() - last < ms ? null : new Promise((r) => setTimeout(r, 0)).then(() => { last = now(); }));
+}
 
 /**
  * Detect notes in recorded audio. Works in browsers and Node.
@@ -103,42 +131,64 @@ const now = () => (globalThis.performance ?? Date).now();
  * Resolves to one frame per detector hop: { time, emitTime, probs, notes, pitchClasses, stable, chord }.
  */
 export async function analyze(input, sampleRate, options) {
+  try {
+    return await analyzeInput(input, sampleRate, options);
+  } catch (e) {
+    throw coded(e);
+  }
+}
+
+async function analyzeInput(input, sampleRate, options) {
   if (input && typeof input.getChannelData === 'function' && typeof input.numberOfChannels === 'number') {
     options = sampleRate; sampleRate = input.sampleRate; input = mixdown(input);
   }
   options = options ?? {};
   const model = checkOptions(options);
   if (!(input instanceof Float32Array)) {
-    if (!(ArrayBuffer.isView(input) || Array.isArray(input))) {
-      throw new PitchPleaseError('bad-input', 'analyze() takes (samples: Float32Array, sampleRate) or an AudioBuffer.');
+    if (!(input !== null && typeof input === 'object' && typeof input.length === 'number' && !(input instanceof DataView))) {
+      throw new PitchPleaseError('bad-input', 'analyze() takes (samples: a Float32Array or array of numbers, sampleRate) or an AudioBuffer.');
     }
     input = Float32Array.from(input);
   }
   if (!(sampleRate > 0)) throw new PitchPleaseError('bad-input', 'analyze(samples, sampleRate): sampleRate must be a positive number (Hz).');
-  const duration = input.length / sampleRate;
 
   if (model.id === 'fft') {
-    return analyzeFftOffline(input, sampleRate, { ...options, stabilityFrames: options.stabilityFrames ?? 4 }, fftFrame);
+    return analyzeFftOffline(input, sampleRate, { ...options, stabilityFrames: options.stabilityFrames ?? 4 }, fftFrame, pacer());
   }
+  const preference = options.kernel ?? 'auto';
+  const [loaded, kernel] = await Promise.all([loadModel(model.id, options.modelBaseUrl), resolveKernel(preference, 'module')]);
+  try {
+    return await decodeOffline(input, sampleRate, options, model, loaded, kernel);
+  } catch (e) {
+    if (preference !== 'auto' || kernel.choice.impl === 'js') throw e;
+    console.warn(`[pitchplease] The '${kernel.choice.id}' kernel failed (${e.message}). Falling back to the JavaScript kernel.`);
+    return decodeOffline(input, sampleRate, options, model, loaded, await resolveKernel('js', 'module'));
+  }
+}
 
-  const [{ manifest, weights }, kernel] = await Promise.all([loadModel(model.id, options.modelBaseUrl), resolveKernel(options.kernel, 'module')]);
+async function decodeOffline(input, sampleRate, options, model, { manifest, weights }, kernel) {
+  const duration = input.length / sampleRate;
   // The kernel takes 48 kHz (its own resampler) and 22.05 kHz; other rates are resampled to 22.05 kHz first.
   const direct = sampleRate === 48000 || sampleRate === 22050;
-  const rate = direct ? sampleRate : 22050;
   const resampler = direct ? null : createResampler(sampleRate, 22050);
-  const det = kernel.impl.createDetector(kernel.impl.parseWeights(manifest, weights), { inputRate: rate, wasmModule: kernel.wasm });
+  let det;
+  try {
+    det = kernel.impl.createDetector(kernel.impl.parseWeights(manifest, weights), { inputRate: direct ? sampleRate : 22050, wasmModule: kernel.wasm });
+  } catch (e) {
+    throw new PitchPleaseError('model-load-failed', `The '${model.id}' weights do not build a detector (${e.message}).`, { cause: e });
+  }
   const tracker = createTracker(trackerOptions(options, model));
   const frames = [];
-  const take = (out) => {
-    for (const f of out) if (f.t < duration) frames.push(modelFrame(tracker, f.t, f.emit, f.probs)[0]);
-  };
   const tail = new Float32Array(Math.ceil(ANALYZE_TAIL_SECONDS * sampleRate));
-  let lastYield = now();
+  const pace = pacer();
   for (const x of [input, tail]) {
     for (let i = 0; i < x.length; i += ANALYZE_CHUNK) {
       const chunk = x.subarray(i, Math.min(i + ANALYZE_CHUNK, x.length));
-      take(det.push(resampler ? resampler.push(chunk) : chunk));
-      if (now() - lastYield > 50) { await yieldToEventLoop(); lastYield = now(); }
+      for (const f of det.push(resampler ? resampler.push(chunk) : chunk)) {
+        if (f.t < duration) frames.push(modelFrame(tracker, f.t, f.emit, f.probs)[0]);
+      }
+      const due = pace();
+      if (due) await due;
     }
   }
   return frames;
@@ -161,25 +211,31 @@ function addWorklet(ctx) {
   return worklets.get(ctx);
 }
 
+const where = () => `this page is ${globalThis.location?.origin ?? 'not https'}`;
+
 function checkBrowser(model, needMic) {
   const AC = globalThis.AudioContext || globalThis.webkitAudioContext;
   if (typeof window === 'undefined' || !AC) {
     throw new PitchPleaseError('no-web-audio', 'start() needs a browser with the Web Audio API. To analyze recorded audio (also in Node), use analyze().');
   }
-  const insecure = globalThis.isSecureContext === false;
-  const where = `this page is ${globalThis.location?.origin ?? 'not https'}`;
   if (needMic && !globalThis.navigator?.mediaDevices?.getUserMedia) {
-    throw insecure
-      ? new PitchPleaseError('insecure-context', `The microphone needs a secure page: serve it over https:// or from http://localhost (${where}).`)
+    throw globalThis.isSecureContext === false
+      ? new PitchPleaseError('insecure-context', `The microphone needs a secure page: serve it over https:// or from http://localhost (${where()}).`)
       : new PitchPleaseError('no-microphone-api', 'This browser has no navigator.mediaDevices.getUserMedia, so it cannot open a microphone.');
   }
-  if (model !== 'fft' && typeof AudioWorkletNode === 'undefined') {
-    throw insecure
-      ? new PitchPleaseError('insecure-context', `AudioWorklet needs a secure page: serve it over https:// or from http://localhost (${where}).`)
-      : new PitchPleaseError('worklet-unsupported', `This browser has no AudioWorklet, which the '${model}' model needs. Use a current Chrome, Edge, Firefox or Safari, or model: 'fft'.`);
-  }
+  checkWorklet(model);
   return AC;
 }
+
+function checkWorklet(model) {
+  if (model === 'fft' || typeof AudioWorkletNode !== 'undefined') return;
+  throw globalThis.isSecureContext === false
+    ? new PitchPleaseError('insecure-context', `AudioWorklet needs a secure page: serve it over https:// or from http://localhost (${where()}).`)
+    : new PitchPleaseError('worklet-unsupported', `This browser has no AudioWorklet, which the '${model}' model needs. Use a current Chrome, Edge, Firefox or Safari, or model: 'fft'.`);
+}
+
+// Duck-typed so that a stream from another realm (an iframe) passes too.
+const isStream = (x) => typeof x?.getTracks === 'function' && typeof x.getAudioTracks === 'function';
 
 async function openMicrophone() {
   try {
@@ -199,6 +255,12 @@ async function openMicrophone() {
   }
 }
 
+/** Resolves with `value` when `promise` has not settled within `ms`; the timer does not outlive the race. */
+function within(promise, ms, value) {
+  let timer;
+  return Promise.race([promise, new Promise((r) => { timer = setTimeout(r, ms, value); })]).finally(() => clearTimeout(timer));
+}
+
 const reportLater = (e) => setTimeout(() => { throw e; }); // a throwing callback must not stop detection
 function call(fn, ...args) {
   if (!fn) return;
@@ -213,10 +275,10 @@ export function create(options = {}) {
   let model = checkOptions(options).id;
   const { onNotes, onChord, onChordEnd, onUpdate, onError } = options;
 
-  let ctx = null, source = null, stream = null, ownStream = false;
-  let engine = null;
-  let running = false, paused = false, heldChord = null;
-  let generation = 0, swaps = 0, starting = null;
+  // The current start(): { ctx, source, stream, ownStream, engine, running, unwake, started }. stop() drops it; a
+  // start() that stop() overtook sees `session !== s` after each await and quietly releases what it opened.
+  let session = null;
+  let paused = false, heldChord = null, swaps = 0;
 
   function fail(e) {
     if (onError) call(onError, e);
@@ -225,126 +287,199 @@ export function create(options = {}) {
   const report = (e) => (onError ? call(onError, e) : console.error(e));
 
   function deliver(eng, frame, event, data) {
-    if (eng !== engine || paused) return;
+    if (eng !== session?.engine || paused) return;
     call(onNotes, frame.notes, frame);
+    if (eng !== session?.engine) return; // onNotes stopped or switched the detector
     if (event === 'chord') { heldChord = frame.chord; call(onChord, frame.chord); }
     else if (event === 'clear') { heldChord = null; call(onChordEnd); }
-    if (onUpdate) call(onUpdate, data());
+    if (onUpdate && eng === session?.engine) call(onUpdate, data());
   }
 
-  async function buildEngine(id, gen) {
-    const m = getModel(id);
-    if (m.id === 'fft') {
-      const eng = { model: 'fft', kernel: null };
-      const t0 = performance.now();
-      const live = startFftEngine({
-        ctx, source, config: fftConfig(options),
-        onStep: (r, t) => {
-          const frame = fftFrame(r, (t - t0) / 1000);
-          deliver(eng, frame, r.event, () => Object.assign(r.data, { notes: frame.notes, probs: null, model: 'fft' }));
-        },
-      });
-      Object.assign(eng, { stats: live.stats, begin: live.begin, setPaused: live.setPaused, stop: live.stop });
-      return eng;
-    }
-    const [{ manifest, weights }, kernel] = await Promise.all([loadModel(m.id, options.modelBaseUrl), resolveKernel(options.kernel, 'bytes'), addWorklet(ctx)]);
-    if (gen !== generation) return null;
-    const node = new AudioWorkletNode(ctx, 'pitchplease', {
+  // The running engine died in the audio thread: stop, and say why. A replaced engine's death is not reported.
+  function engineFailed(eng, e) {
+    if (eng !== session?.engine) return;
+    teardown();
+    report(e);
+  }
+
+  function fftEngine(s) {
+    const eng = { model: 'fft', kernel: null };
+    // frame.time counts unpaused time since begin(), as a worklet engine's audio clock does
+    let t0 = 0, pausedAt = null, pausedMs = 0;
+    const live = startFftEngine({
+      ctx: s.ctx, source: s.source, config: fftConfig(options),
+      onStep: (r, t) => {
+        const frame = fftFrame(r, (t - t0 - pausedMs) / 1000);
+        deliver(eng, frame, r.event, () => Object.assign(r.data, { notes: frame.notes, probs: null, model: 'fft' }));
+      },
+    });
+    return Object.assign(eng, {
+      stats: live.stats,
+      begin() { t0 = performance.now(); live.begin(); },
+      setPaused(p) {
+        const t = performance.now();
+        if (p && pausedAt === null) pausedAt = t;
+        else if (!p && pausedAt !== null) { pausedMs += t - pausedAt; pausedAt = null; }
+        live.setPaused(p);
+      },
+      stop: live.stop,
+    });
+  }
+
+  // A trained model in an AudioWorkletNode. `ready` settles once the processor has built its detector: with null,
+  // or with the message of the error that stopped it.
+  function workletEngine(s, m, kernel, { manifest, weights }, tracker, threshold) {
+    const node = new AudioWorkletNode(s.ctx, 'pitchplease', {
       numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1],
       channelCount: 1, channelCountMode: 'explicit', channelInterpretation: 'speakers',
       processorOptions: { manifest, weights, impl: kernel.choice.impl, wasmBytes: kernel.wasm },
     });
-    const tracker = createTracker(trackerOptions(options, m));
-    const threshold = resolveThreshold(m, options.threshold);
-    const eng = { model: m.id, kernel: kernel.choice.id, stats: { cpuLoad: 0, framesPerSecond: 0 } };
+    const eng = { model: m.id, kernel: kernel.choice.id, stats: { cpuLoad: 0, framesPerSecond: 0 }, installed: false };
+    let settle;
+    eng.ready = new Promise((r) => { settle = r; });
+    const died = (message) => {
+      if (!eng.installed) settle(message);
+      else engineFailed(eng, new PitchPleaseError('processor-error', `The '${m.id}' detector stopped in the audio thread: ${message}`));
+    };
     node.port.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'frame') {
-        if (eng !== engine || paused) return;
+        if (eng !== session?.engine || paused) return;
         const [frame, event] = modelFrame(tracker, msg.t, msg.emit, msg.probs);
         deliver(eng, frame, event, () => modelUpdateData(frame, m.id, threshold));
+      } else if (msg.type === 'ready') {
+        settle(null);
       } else if (msg.type === 'stats') {
         eng.stats.cpuLoad = msg.cpuLoad; eng.stats.framesPerSecond = msg.framesPerSecond;
       } else if (msg.type === 'error') {
-        report(new PitchPleaseError('processor-error', `The '${m.id}' detector stopped in the audio thread: ${msg.message}`));
+        died(msg.message);
       }
     };
-    node.onprocessorerror = () => report(new PitchPleaseError('processor-error', `The '${m.id}' detector crashed in the audio thread.`));
-    source.connect(node);
-    node.connect(ctx.destination); // keeps the node pulled; it outputs silence
-    Object.assign(eng, {
+    node.onprocessorerror = () => died('it crashed');
+    s.source.connect(node);
+    node.connect(s.ctx.destination); // keeps the node pulled; it outputs silence
+    return Object.assign(eng, {
       begin() {},
       setPaused(p) { node.port.postMessage({ type: 'pause', paused: p }); },
       stop() {
-        try { source.disconnect(node); } catch {}
+        try { s.source?.disconnect(node); } catch {}
         try { node.disconnect(); } catch {}
         node.port.postMessage({ type: 'stop' });
         node.port.onmessage = null;
+        node.onprocessorerror = null;
+        settle(null);
       },
     });
-    return eng;
   }
 
-  function install(eng) {
-    engine = eng;
+  // The engine for model `id` on session s, or null once stale() (stop(), or a newer setModel()) made it pointless.
+  // Under kernel 'auto', a WASM kernel that fails in the audio thread is replaced by the JavaScript one.
+  async function buildEngine(s, id, stale) {
+    const m = getModel(id);
+    if (m.id === 'fft') return fftEngine(s);
+    checkWorklet(m.id);
+    const threshold = resolveThreshold(m, options.threshold);
+    const tracker = createTracker(trackerOptions(options, m));
+    const preference = options.kernel ?? 'auto';
+    const [loaded, first] = await Promise.all([loadModel(m.id, options.modelBaseUrl), resolveKernel(preference, 'bytes'), addWorklet(s.ctx)]);
+    for (let kernel = first; ;) {
+      if (stale()) return null;
+      const eng = workletEngine(s, m, kernel, loaded, tracker, threshold);
+      const failure = await within(eng.ready, READY_WAIT_MS, null);
+      if (stale()) { eng.stop(); return null; }
+      if (failure === null) return eng;
+      eng.stop();
+      if (preference !== 'auto' || kernel.choice.impl === 'js') {
+        throw new PitchPleaseError('processor-error', `The '${m.id}' detector stopped in the audio thread: ${failure}`);
+      }
+      console.warn(`[pitchplease] The '${kernel.choice.id}' kernel failed in the audio thread (${failure}). Falling back to the JavaScript kernel.`);
+      kernel = await resolveKernel('js', 'bytes');
+    }
+  }
+
+  function install(s, eng) {
+    s.engine = eng;
+    eng.installed = true;
+    s.running = true;
     if (paused) eng.setPaused(true);
-    eng.begin();
+    eng.begin(); // fft delivers its first frame here; a callback may stop() the detector
+  }
+
+  function release(s) {
+    s.running = false;
+    s.engine?.stop();
+    s.engine = null;
+    s.unwake?.();
+    s.unwake = null;
+    try { s.source?.disconnect(); } catch {}
+    if (s.ownStream) s.stream?.getTracks().forEach((t) => t.stop());
+    s.ctx?.close().catch(() => {});
+    s.ctx = s.source = s.stream = null;
+    s.ownStream = false;
   }
 
   function teardown() {
-    generation++;
-    running = false;
-    engine?.stop(); engine = null;
-    try { source?.disconnect(); } catch {}
-    if (ownStream) stream?.getTracks().forEach((t) => t.stop());
-    ctx?.close().catch(() => {});
-    ctx = source = stream = null; ownStream = false; heldChord = null;
+    const s = session;
+    session = null;
+    heldChord = null;
+    paused = false;
+    if (s) release(s);
   }
 
-  async function start(input) {
-    if (running) return;
-    if (starting) return starting;
-    const gen = ++generation;
-    starting = (async () => {
-      if (input != null && !(typeof MediaStream !== 'undefined' && input instanceof MediaStream)) {
-        throw new PitchPleaseError('bad-source', 'start(source): source must be a MediaStream, or nothing to use the microphone.');
-      }
-      const AC = checkBrowser(model, input == null);
-      // Create the context inside the user gesture (before the permission prompt) so it starts running.
-      ctx = new AC({ sampleRate: 48000, renderSizeHint: 512 });
-      const resumed = ctx.resume().catch(() => {});
-      if (model !== 'fft') { loadModel(model, options.modelBaseUrl).catch(() => {}); addWorklet(ctx).catch(() => {}); }
-      const s = input ?? await openMicrophone();
-      if (gen !== generation) { if (input == null) s.getTracks().forEach((t) => t.stop()); return; }
-      stream = s; ownStream = input == null;
-      try {
-        source = ctx.createMediaStreamSource(stream);
-      } catch (e) {
-        // Browsers that cannot resample a microphone into a 48 kHz context: use the device rate; the worklet resamples.
-        if (e && e.name !== 'NotSupportedError') throw e;
-        ctx.close().catch(() => {});
-        ctx = new AC();
-        source = ctx.createMediaStreamSource(stream);
-        if (ctx.state === 'suspended') {
-          const wake = () => ctx?.resume();
-          ctx.resume();
-          for (const ev of ['pointerdown', 'keydown']) globalThis.addEventListener?.(ev, wake, { once: true });
-        }
-      }
-      await Promise.race([resumed, new Promise((r) => setTimeout(r, 200))]);
-      const eng = await buildEngine(model, gen);
-      if (gen !== generation || !eng) { eng?.stop(); return; }
-      install(eng);
-      running = true;
-    })();
+  function connectSource(s, AC) {
     try {
-      await starting;
+      return s.ctx.createMediaStreamSource(s.stream);
     } catch (e) {
-      if (gen === generation) teardown();
-      fail(e);
-    } finally {
-      starting = null;
+      // Browsers that cannot resample a microphone into a 48 kHz context: use the device rate; the worklet resamples.
+      if (e?.name !== 'NotSupportedError') throw e;
+      s.ctx.close().catch(() => {});
+      s.ctx = new AC();
+      s.ctx.resume().catch(() => {});
+      return s.ctx.createMediaStreamSource(s.stream);
     }
+  }
+
+  // A context still suspended (start() ran outside a click or key handler) resumes on the next click or key press.
+  function wakeOnGesture(s) {
+    if (typeof globalThis.addEventListener !== 'function') return;
+    const ctx = s.ctx;
+    const wake = () => { if (ctx.state === 'suspended') ctx.resume().catch(() => {}); };
+    for (const ev of ['pointerdown', 'keydown']) globalThis.addEventListener(ev, wake, true);
+    s.unwake = () => { for (const ev of ['pointerdown', 'keydown']) globalThis.removeEventListener(ev, wake, true); };
+  }
+
+  async function open(s, input) {
+    if (input != null) {
+      if (!isStream(input)) throw new PitchPleaseError('bad-source', 'start(source): source must be a MediaStream, or nothing to use the microphone.');
+      if (!input.getAudioTracks().length) throw new PitchPleaseError('bad-source', 'start(source): the MediaStream has no audio track.');
+    }
+    const AC = checkBrowser(model, input == null);
+    // Create the context inside the user gesture (before the permission prompt) so it starts running.
+    s.ctx = new AC({ sampleRate: 48000, renderSizeHint: 512 });
+    const resumed = s.ctx.resume().catch(() => {});
+    if (model !== 'fft') { loadModel(model, options.modelBaseUrl).catch(() => {}); addWorklet(s.ctx).catch(() => {}); }
+    const stream = input ?? await openMicrophone();
+    s.stream = stream;
+    s.ownStream = input == null;
+    if (session !== s) { release(s); return; }
+    s.source = connectSource(s, AC);
+    await within(resumed, RESUME_WAIT_MS);
+    if (session !== s) return;
+    if (s.ctx.state === 'suspended') wakeOnGesture(s);
+    const eng = await buildEngine(s, model, () => session !== s);
+    if (eng) install(s, eng);
+  }
+
+  function start(input) {
+    if (session) return session.started; // running, or starting: share that outcome
+    const s = { ctx: null, source: null, stream: null, ownStream: false, engine: null, running: false, unwake: null, started: null };
+    session = s;
+    s.started = open(s, input).catch((e) => {
+      if (session !== s) return; // stop() cancelled this start: nothing to report
+      teardown(); // first, so that onError can call start() again
+      fail(coded(e));
+    });
+    return s.started;
   }
 
   function stop() {
@@ -353,46 +488,50 @@ export function create(options = {}) {
 
   function togglePause() {
     paused = !paused;
-    engine?.setPaused(paused);
+    session?.engine?.setPaused(paused);
     return paused;
   }
 
   async function setModel(id) {
-    let prevModel = model;
+    let m;
+    try { m = getModel(id); } catch (e) { fail(e); return; }
+    if (m.id === model) return;
+    const prev = model;
+    model = m.id;
+    const s = session;
+    if (!s) { // not started: select it, and warm the cache for start()
+      if (m.id !== 'fft') loadModel(m.id, options.modelBaseUrl).catch(() => {});
+      return;
+    }
+    const swap = ++swaps;
+    const stale = () => session !== s || swap !== swaps;
     try {
-      const m = getModel(id);
-      if (m.id === model) return;
-      model = m.id;
-      if (!running && !starting) {
-        if (m.id !== 'fft') loadModel(m.id, options.modelBaseUrl).catch(() => {}); // warm the cache for start()
-        return;
-      }
-      if (starting) await starting.catch(() => {});
-      if (!running) return;
-      prevModel = engine?.model ?? prevModel;
-      const gen = generation, swap = ++swaps;
-      const next = await buildEngine(m.id, gen);
-      if (gen !== generation || swap !== swaps || !next) { next?.stop(); return; }
-      const prev = engine;
-      install(next);
-      prev?.stop();
-      if (heldChord) { heldChord = null; call(onChordEnd); }
+      if (!s.running) await s.started.catch(() => {}); // starting: it may build this model itself
+      if (stale() || !s.running || s.engine.model === m.id) return;
+      const next = await buildEngine(s, m.id, stale);
+      if (!next) return;
+      if (heldChord) { heldChord = null; call(onChordEnd); } // the old engine still runs during this callback
+      if (stale()) { next.stop(); return; }
+      const old = s.engine;
+      install(s, next); // the new engine is ready: it takes over, and the old one retires
+      old.stop();
     } catch (e) {
-      if (model === id) model = prevModel;
-      fail(e);
+      if (swap === swaps) model = session === s && s.engine ? s.engine.model : prev;
+      fail(coded(e));
     }
   }
 
   return {
     start, stop, togglePause, setModel,
     get paused() { return paused; },
-    get running() { return running; },
+    get running() { return session?.running === true; },
     get model() { return model; },
     get stats() {
+      const eng = session?.engine;
       return {
-        model: engine?.model ?? model, kernel: engine?.kernel ?? null,
-        cpuLoad: engine?.stats.cpuLoad ?? 0, framesPerSecond: engine?.stats.framesPerSecond ?? 0,
-        sampleRate: ctx?.sampleRate ?? 0,
+        model: eng?.model ?? model, kernel: eng?.kernel ?? null,
+        cpuLoad: eng?.stats.cpuLoad ?? 0, framesPerSecond: eng?.stats.framesPerSecond ?? 0,
+        sampleRate: session?.ctx?.sampleRate ?? 0,
       };
     },
   };

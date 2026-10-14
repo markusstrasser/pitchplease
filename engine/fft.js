@@ -19,9 +19,10 @@ function midiToPitchClass(midi) {
 }
 
 export function fftConfig(opts = {}) {
+  const fftSize = opts.fftSize || 16384;
   return {
-    fftSize: opts.fftSize || 16384,
-    binCount: opts.binCount || 500,
+    fftSize,
+    binCount: opts.binCount || Math.min(500, fftSize / 2), // the analyser has fftSize / 2 bins
     stabilityFrames: opts.stabilityFrames || 4,
     clearAfterMs: opts.clearAfterMs ?? 200,
     maxPeaks: 64,
@@ -252,8 +253,11 @@ export function createAnalyserEmulator(fftSize, { minDecibels = -80, maxDecibels
   };
 }
 
-/** Offline v2 analysis at 60 analysis frames per second of audio (v2 ran once per display frame). */
-export function analyzeFftOffline(samples, sampleRate, opts, toFrame) {
+/**
+ * Offline v2 analysis at 60 analysis frames per second of audio (v2 ran once per display frame). pace() returns a
+ * promise to await when it is time to yield to the event loop, else null.
+ */
+export async function analyzeFftOffline(samples, sampleRate, opts, toFrame, pace = () => null) {
   const config = fftConfig(opts);
   const analysis = createFftAnalysis(config, sampleRate);
   const emu = createAnalyserEmulator(config.fftSize);
@@ -263,6 +267,8 @@ export function analyzeFftOffline(samples, sampleRate, opts, toFrame) {
     const end = Math.round(i * hop), time = end / sampleRate;
     const result = analysis.step(emu.frequencyData(samples, end), time * 1000);
     frames.push(toFrame(result, time));
+    const due = pace();
+    if (due) await due;
   }
   return frames;
 }

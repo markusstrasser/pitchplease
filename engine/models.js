@@ -49,13 +49,26 @@ const DEFAULT_URLS = {
   voice: () => new URL('../models/voice.bin', import.meta.url),
 };
 
-/** Where a model's weights are fetched from: `<modelBaseUrl>/<id>.bin`, or the copy shipped in models/. */
+/**
+ * Where a model's weights are fetched from: `<id>.bin` inside the folder modelBaseUrl names (a query string, such
+ * as ?v=3, is kept), or the copy shipped in models/. Throws 'bad-options' for a base that does not resolve here.
+ */
 export function modelUrl(id, modelBaseUrl) {
   if (!DEFAULT_URLS[id]) throw new PitchPleaseError('unknown-model', `Model '${id}' has no weights file.`);
   if (modelBaseUrl == null) return DEFAULT_URLS[id]();
-  let base = typeof modelBaseUrl === 'object' && modelBaseUrl.href ? modelBaseUrl.href : String(modelBaseUrl);
-  if (!base.endsWith('/')) base += '/';
-  return new URL(`${id}.bin`, new URL(base, globalThis.location?.href));
+  const raw = typeof modelBaseUrl === 'object' && modelBaseUrl.href ? modelBaseUrl.href : String(modelBaseUrl);
+  let base;
+  try {
+    if (!raw.trim()) throw new TypeError('empty');
+    base = new URL(raw, globalThis.location?.href);
+  } catch (e) {
+    throw new PitchPleaseError('bad-options', `modelBaseUrl '${raw}' is not a URL here` + (globalThis.location ? '.' :
+      ': outside a browser it must be absolute, e.g. a file: or https: URL of the folder.'), { cause: e });
+  }
+  if (!base.pathname.endsWith('/')) base.pathname += '/';
+  const url = new URL(`${id}.bin`, base);
+  url.search = base.search;
+  return url;
 }
 
 // ---- weights file: "PPW1", u32 LE header length, UTF-8 JSON header, zero padding to 4 bytes, float32 LE tensors.
@@ -78,9 +91,16 @@ export function unpackModel(buffer) {
   const bytes = new Uint8Array(buffer);
   if (bytes.length < 8 || new TextDecoder().decode(bytes.subarray(0, 4)) !== MAGIC) throw new Error('not a PitchPlease weights file (bad magic)');
   const n = new DataView(buffer).getUint32(4, true);
+  if (8 + n > bytes.length) throw new Error('truncated weights file (the header runs past the end)');
   const header = JSON.parse(new TextDecoder().decode(bytes.subarray(8, 8 + n)));
   const start = (8 + n + 3) & ~3;
   const weights = buffer.slice(start);
+  if (weights.byteLength % 4) throw new Error('truncated weights file (not a whole number of floats)');
+  const floats = weights.byteLength / 4;
+  for (const [name, t] of Object.entries(header.tensors ?? {})) {
+    const end = t.offset + t.shape.reduce((a, b) => a * b, 1);
+    if (!(t.offset >= 0 && end <= floats)) throw new Error(`truncated weights file: tensor '${name}' ends at float ${end}, the file holds ${floats}`);
+  }
   return { header, manifest: { tensors: header.tensors, const: header.const }, weights };
 }
 
