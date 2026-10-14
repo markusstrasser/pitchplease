@@ -8,11 +8,12 @@
 // bytes in processorOptions and compiles them synchronously (new WebAssembly.Module), which avoids posting a
 // compiled WebAssembly.Module to a worklet (unverified on Safari and Firefox).
 //
-// To add the WASM-SIMD kernel (pitchtest/web/incport-wasm.js and its .wasm builds):
-//   1. copy incport-wasm.js and the .wasm files into engine/, and record them in engine/vendor.json
-//   2. import it below and register it in IMPLS as `wasm`
-//   3. add one CHOICES entry per .wasm build, best first, each with the feature probe it needs
-//   4. npm run build (regenerates engine/worklet.js) and npm test (the parity tests run every supported choice)
+// To add the WASM-SIMD kernel (pitchtest/web/incport-wasm.js and its .wasm builds, once committed there):
+//   1. npm run vendor -- incport-wasm.js incport.wasm incport-relaxed.wasm   (copies them, records the commit)
+//   2. uncomment the wasmKernel import and its IMPLS entry below
+//   3. uncomment the two CHOICES entries (one per .wasm build, best first, each with the feature probe it needs)
+//   4. npm run build (regenerates engine/worklet.js), npm test (parity runs every supported choice), npm run test:ui
+// The kernel module must stay bundler-safe: no import('node:…') and only literal `new URL('./x', import.meta.url)`.
 import { PitchPleaseError } from './errors.js';
 import * as jsKernel from './incport.js';
 // import * as wasmKernel from './incport-wasm.js';

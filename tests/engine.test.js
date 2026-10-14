@@ -8,6 +8,7 @@ import * as P from '../pitchplease.js';
 import { unpackModel, packModel, modelUrl } from '../engine/models.js';
 import { CHOICES, kernelSupported } from '../engine/kernels.js';
 import { MODEL_SOURCES, workletSource } from '../scripts/build.mjs';
+import { checkVendored } from '../scripts/vendor.mjs';
 import { readWav } from './helpers/wav.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -119,12 +120,11 @@ describe('packed models', () => {
 });
 
 describe('vendored kernel and generated worklet', () => {
-  const vendor = JSON.parse(readFileSync(`${ROOT}engine/vendor.json`));
-  test('engine/incport.js is the recorded copy', () => {
-    expect(sha256(readFileSync(`${ROOT}engine/incport.js`))).toBe(vendor['incport.js'].sha256);
+  test('vendored files match engine/vendor.json (sha256, header commit)', () => {
+    expect(checkVendored({ upstream: false }).problems).toEqual([]);
   });
-  test.skipIf(!HAVE_SOURCE)('upstream pitchtest/web/incport.js has not moved since it was vendored', () => {
-    expect(sha256(readFileSync(`${PITCHTEST_WEB}incport.js`))).toBe(vendor['incport.js'].sha256);
+  test.skipIf(!HAVE_SOURCE)('vendored files are byte-identical to ../pitchtest/web (skipped without that checkout)', () => {
+    expect(checkVendored({ upstream: true }).problems).toEqual([]);
   });
   test('engine/worklet.js is up to date with its sources (npm run build)', () => {
     expect(readFileSync(`${ROOT}engine/worklet.js`, 'utf8')).toBe(workletSource());
