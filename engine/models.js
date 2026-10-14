@@ -10,7 +10,7 @@ import { fetchBytes } from './load.js';
 export const MODELS = Object.freeze([
   {
     id: 'fast', label: 'Fast', default: true,
-    useCase: 'Any device, chords, the safe default. Also the most accurate on unaccompanied singing.',
+    useCase: 'The default: chords on laptops and desktops, the lightest trained model. Also the most accurate on unaccompanied singing.',
     sizeKB: 495, relativeCost: 1, latencyMs: 50, pianoF1: 0.679, guitarF1: 0.784, voiceF1: 0.911,
     threshold: { on: 0.7, off: 0.42 },
   },
@@ -22,13 +22,13 @@ export const MODELS = Object.freeze([
   },
   {
     id: 'voice', label: 'Voice', default: false,
-    useCase: 'Singing together with instruments: piano and guitar on par with the piano model, sung notes accepted about as well as by fast. Same compute as piano.',
+    useCase: 'Piano and guitar close to the piano model; sung notes accepted about as well as by fast on vocadito, but parity on new singers is not established (fast is best for unaccompanied singing). Same compute as piano.',
     sizeKB: 545, relativeCost: 2.1, latencyMs: 41, pianoF1: 0.726, guitarF1: 0.821, voiceF1: 0.886,
     threshold: { on: 0.65, off: 0.39 },
   },
   {
     id: 'fft', label: 'FFT (v2)', default: false,
-    useCase: 'No model download and the lightest CPU: the v2 FFT peak picker, unchanged. Far less accurate and slower to react.',
+    useCase: "No model download and the lightest CPU: v2's FFT peak picker (as in its final source, not npm 2.0.0). Far less accurate and slower to react.",
     sizeKB: 0, relativeCost: null, latencyMs: 260, pianoF1: 0.375, guitarF1: 0.347, voiceF1: 0.546,
     threshold: null,
   },

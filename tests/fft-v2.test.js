@@ -110,3 +110,18 @@ test('a pause and resume inside one animation frame does not start a second loop
   d.stop();
   expect(frameCount).toBe(10);
 });
+
+// The detector published as npm 2.0.0 is older than 365f53f; the README lists the differences. Pin the chord ones.
+test('npm 2.0.0 differs from v3 as the README says', async () => {
+  const { createRequire } = await import('node:module');
+  const npm2 = createRequire(import.meta.url)('./fixtures/pitchplease-npm-2.0.0.js');
+  const name = (c) => c?.full ?? null;
+  expect([[0, 7], [0, 4, 10], [0, 3, 4, 7]].map((pcs) => name(npm2.matchChord(pcs)))).toEqual(['C5', 'C7', 'C']);
+  expect([[0, 7], [0, 4, 10], [0, 3, 4, 7]].map((pcs) => name(P.matchChord(pcs)))).toEqual([null, null, null]);
+  expect(name(npm2.matchChord([0, 4, 7]))).toBe('C'); // exact triads agree
+  expect(name(P.matchChord([0, 4, 7]))).toBe('C');
+  const hold = P.createChordHold(Infinity); // the old hold-forever behaviour
+  expect(hold.update([0, 4, 7], true, 0)).toBe('chord');
+  expect(hold.update([], false, 1e9)).toBe(null);
+  expect(hold.chord.full).toBe('C');
+});

@@ -22,11 +22,14 @@ Without a bundler, import it from a CDN (or from a copy of the package folder) i
 
 ```html
 <script type="module">
-  import { create } from 'https://cdn.jsdelivr.net/npm/@markusstrasser/pitchplease@3/pitchplease.js';
+  import { create } from 'https://cdn.jsdelivr.net/npm/@markusstrasser/pitchplease@3.0.0/pitchplease.js';
   const detector = create({ onChord: (chord) => (document.title = chord.full) });
   document.querySelector('button').onclick = () => detector.start();
 </script>
 ```
+
+Pin the exact version in CDN URLs. The worklet, the `.wasm` kernels and the model files are all fetched relative to
+the URL `pitchplease.js` was imported from, so a range like `@3` could mix files of two versions across caches.
 
 The page must be served over `https://` or from `http://localhost`, and `start()` must run inside a click or key
 handler: browsers require both for the microphone.
@@ -35,9 +38,9 @@ handler: browsers require both for the microphone.
 
 | model | best for | download | CPU | piano F1 / latency | guitar F1 / latency | singing F1 / latency |
 |---|---|---|---|---|---|---|
-| `fast` (default) | any device, chords, singing alone | 495 KB | 1× | 0.679 / 50 ms | 0.784 / 40 ms | **0.911 / 37 ms** |
+| `fast` (default) | the default: chords, singing alone; lightest trained model | 495 KB | 1× | 0.679 / 50 ms | 0.784 / 40 ms | **0.911 / 37 ms** |
 | `piano` | piano (and guitar) accuracy | 545 KB | 2.1× | **0.729 / 40 ms** | 0.818 / 33 ms | 0.872 / 44 ms |
-| `voice` | singing together with instruments | 545 KB | 2.1× | 0.726 / 41 ms | **0.821 / 34 ms** | 0.886 / 45 ms |
+| `voice` | piano and guitar near `piano`; sung notes about as well as `fast` | 545 KB | 2.1× | 0.726 / 41 ms | **0.821 / 34 ms** | 0.886 / 45 ms |
 | `fft` | no download, lightest CPU (v2's engine) | none | tiny | 0.375 / 260 ms | 0.347 / 155 ms | 0.546 / 145 ms |
 
 ```js
@@ -111,7 +114,7 @@ const detector = create({
 
 | detector | |
 |---|---|
-| `await start(stream?)` | Opens the microphone (raw: no echo cancellation, noise suppression or gain control) or uses the `MediaStream` you pass. Downloads the model while the permission prompt shows. Resolves `true` once detecting, `false` if it failed (with `onError`) or `stop()` cancelled it; a second call while starting or running shares that outcome. |
+| `await start(stream?)` | Opens the microphone (raw: no echo cancellation, noise suppression or gain control) or uses the `MediaStream` you pass (a stream passed while already starting or running is ignored: `stop()` first). Downloads the model while the permission prompt shows. Resolves `true` once detecting, `false` if it failed (with `onError`) or `stop()` cancelled it; a second call while starting or running shares that outcome. |
 | `stop()` | Stops, releases the microphone (a stream you passed is left running) and clears the pause. A `start()` still opening is cancelled quietly. `start()` works again. |
 | `togglePause()` | Pauses or resumes; returns the new paused state. Without a started session it does nothing and returns `false`. |
 | `await setModel(id)` | Swaps models while running: the new model takes over once it reports ready in the audio thread (within 2 s, else the switch fails), then the old one stops; the mic stays open. If the new model fails, the old one keeps running and the error is reported. Resolves the model running afterwards (`id`, the old model after a failure, or `null` when nothing runs). Before `start()`, it selects the model and preloads its weights. |
@@ -198,7 +201,8 @@ cross-origin CDN import. Each model file downloads only when that model is used.
 
 - **webpack** warns that the three `.bin` files exceed its 244 KiB asset hint. They are fetched on demand, so the
   warning can be ignored (or silenced with `performance: { hints: false }`).
-- **Self-hosting the weights**: copy `models/` anywhere and pass `modelBaseUrl: 'https://cdn.example.com/pp/'`.
+- **Self-hosting the weights**: copy `models/` anywhere and pass `modelBaseUrl: 'https://cdn.example.com/pp/'`. This
+  moves `models/` only: `engine/` (the worklet and the `.wasm` kernels) must stay next to `pitchplease.js`.
 - **Cross-origin**: the worklet and the weights need CORS headers when served from another origin (public npm CDNs
   send them).
 - **Node**: `analyze()` works in Node ≥ 20.19 and Bun; `require('@markusstrasser/pitchplease')` works too.
@@ -206,18 +210,29 @@ cross-origin CDN import. Each model file downloads only when that model is used.
 
 ## Migrating from v2
 
-- **The default detector changed.** v3 runs the trained `fast` model. Pass `model: 'fft'` to keep v2's detector; it is
-  v2's code, and a test runs v2 and v3 side by side to check that every frame matches.
+- **The default detector changed.** v3 runs the trained `fast` model. `model: 'fft'` runs v2's FFT detector as it
+  stands in its final source (git 365f53f, a test checks every frame against that file). That is **not** the detector
+  published as npm 2.0.0, which differs:
+  - `matchChord` in 2.0.0 accepts 2 pitch classes and the best partial match (score above 0.5, with a power-chord
+    `5` template), so `[0, 7]` is C5, `[0, 4, 10]` is C7 and `[0, 3, 4, 7]` is C. v3 needs 3 or more pitch classes and
+    an exact interval match, and has no `5` template: all three give `null`.
+  - The harmonic sieve in 2.0.0 accepts a fundamental without harmonics and above a score of 0.3, with a 0.5-semitone
+    tolerance. v3 needs at least 2 harmonics, a score above 0.5 and a 0.7-semitone tolerance, so it reports fewer
+    notes.
+  - 2.0.0 holds the last chord forever. v3 clears it after `clearAfterMs` (200 ms) of silence and calls `onChordEnd`;
+    `clearAfterMs: Infinity` keeps the old hold-forever behaviour.
+
+  A test runs the npm 2.0.0 file (`tests/fixtures/pitchplease-npm-2.0.0.js`) and asserts these chord differences.
 - **It is an ES module.** Replace `<script src="pitchplease.js">` and the global `PitchPlease` with
   `<script type="module">` and `import { create } from './pitchplease.js'` (or `import PitchPlease from …` to keep the
   `PitchPlease.create` style). Copy the whole package folder (`pitchplease.js`, `engine/`, `models/`), not just
   `pitchplease.js`. CommonJS `require()` still works in Node ≥ 20.19.
-- **New**: `onNotes(notes, frame)`, `setModel()`, `models`, `analyze()`, `stats`, `running`, `model`, `threshold`,
-  `modelBaseUrl`, error codes.
-- **Errors**: `start()` still calls `onError` when you pass one. Without `onError`, `start()` and `setModel()` now
-  reject instead of logging.
-- **Chords** come from the same `matchChord` and `createChordHold`. With trained models, `stabilityFrames` defaults to
-  1, because the models' on/off hysteresis already steadies the notes; `fft` keeps 4.
+- **New**: `onNotes(notes, frame)`, `onChordEnd`, `setModel()`, `models`, `analyze()`, `stats`, `running`, `model`,
+  `threshold`, `modelBaseUrl`, `createChordHold`, error codes.
+- **Errors**: `start()` still calls `onError` when you pass one, and then resolves `false`. Without `onError`, `start()`
+  and `setModel()` now reject instead of logging.
+- **Chords** come from the same `matchChord` and `createChordHold` as v2's final source. With trained models,
+  `stabilityFrames` defaults to 1, because the models' on/off hysteresis already steadies the notes; `fft` keeps 4.
 - **Behaviour fixes**: the AudioContext is created at 48 kHz inside the click, before the permission prompt, so it is
   not left suspended; a pause and resume within one animation frame no longer starts a second detection loop.
 

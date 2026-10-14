@@ -1,7 +1,10 @@
 // Type definitions for @markusstrasser/pitchplease 3.0
 // Self-contained: no DOM lib needed (browser objects are typed structurally).
 
-/** 'fast' (default), 'piano' and 'voice' are trained detectors; 'fft' is the v2 FFT peak picker. */
+/**
+ * 'fast' (default), 'piano' and 'voice' are trained detectors; 'fft' is v2's FFT peak picker. Minor releases may add
+ * models, so handle unknown ids (for example with a default branch).
+ */
 export type ModelId = 'fast' | 'piano' | 'voice' | 'fft';
 
 /** Detector kernel: 'auto' picks the fastest one this runtime supports. Lists engine/kernels.js CHOICES (tested). */
@@ -87,7 +90,10 @@ export interface ModelInfo {
   readonly sizeKB: number;
   /** Compute per second of audio relative to 'fast'; null for 'fft' (a different, much lighter engine). */
   readonly relativeCost: number | null;
-  /** Median ms from a note's onset to its first detected frame on held-out piano (missed notes count as never). */
+  /**
+   * Piano onset latency: the median ms from a note's onset to its first detected frame on held-out piano (MAESTRO),
+   * missed notes counted as never detected. Guitar and singing latencies are in the README.
+   */
   readonly latencyMs: number;
   /** Frame-level note F1 on held-out piano (MAESTRO). */
   readonly pianoF1: number;
@@ -111,7 +117,8 @@ export interface CommonOptions {
   threshold?: Partial<Threshold>;
   /**
    * Folder that holds fast.bin, piano.bin and voice.bin, if you host the weights yourself (a string or a URL; a
-   * query such as ?v=3 is kept). Outside a browser it must be absolute.
+   * query such as ?v=3 is kept). Outside a browser it must be absolute. It relocates models/ only: engine/ (the
+   * worklet and the .wasm kernels) must stay next to pitchplease.js.
    */
   modelBaseUrl?: string | { readonly href: string };
   /** Detector kernel (default 'auto'; under 'auto', a WASM kernel that fails falls back to JavaScript). */
@@ -174,7 +181,7 @@ export interface Detector {
   /**
    * Open the microphone (or use `source`) and start detecting. Call it from a click or key handler; a context that
    * still starts suspended resumes on the next click or key press. Calls made while starting or running share that
-   * outcome. Resolves true once the engine runs, false if start failed (the error went to onError) or stop()
+   * outcome; a `source` passed while starting or running is ignored (stop() first). Resolves true once the engine runs, false if start failed (the error went to onError) or stop()
    * cancelled it. Without onError, a failure rejects instead.
    */
   start(source?: MediaStreamLike): Promise<boolean>;
@@ -200,6 +207,7 @@ export interface Detector {
   readonly stats: Stats;
 }
 
+/** Minor releases may add codes; treat an unknown one like 'internal-error'. */
 export type ErrorCode =
   | 'unknown-model' | 'bad-options' | 'bad-threshold' | 'bad-input' | 'bad-source'
   | 'unknown-kernel' | 'kernel-unsupported' | 'kernel-load-failed'
