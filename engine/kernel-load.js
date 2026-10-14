@@ -30,7 +30,13 @@ export async function resolveKernel(preference = 'auto', want = 'bytes', choices
       if (!choice.wasm) return { choice, impl: IMPLS[choice.impl], wasm: undefined };
       const bytes = await kernelBytes(choice);
       if (want === 'bytes') return { choice, impl: IMPLS[choice.impl], wasm: bytes };
-      if (!wasmModules.has(choice.id)) wasmModules.set(choice.id, WebAssembly.compile(bytes));
+      if (!wasmModules.has(choice.id)) {
+        const id = choice.id;
+        wasmModules.set(id, WebAssembly.compile(bytes).catch((e) => {
+          wasmModules.delete(id);
+          throw new PitchPleaseError('kernel-load-failed', `The '${id}' kernel did not compile: ${e.message}.`, { cause: e });
+        }));
+      }
       return { choice, impl: IMPLS[choice.impl], wasm: await wasmModules.get(choice.id) };
     } catch (e) {
       if (preference !== 'auto') throw e;

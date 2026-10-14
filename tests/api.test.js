@@ -216,4 +216,18 @@ describe('kernel selection (the WASM seam)', () => {
     const mod = await resolveKernel('wasm-test', 'module', [choice]);
     expect(mod.wasm).toBeInstanceOf(WebAssembly.Module);
   });
+
+  test('a .wasm that downloads but does not compile is kernel-load-failed when named, and falls back under auto', async () => {
+    const { writeFileSync, mkdtempSync } = await import('node:fs');
+    const dir = mkdtempSync(`${(await import('node:os')).tmpdir()}/pp-wasm-bad-`);
+    writeFileSync(`${dir}/k.wasm`, new Uint8Array([0, 0x61, 0x73, 0x6d, 9, 9, 9, 9])); // bad version: compile throws
+    const choice = { id: 'wasm-garbled', impl: 'js', probe: SIMD_PROBE, wasm: () => new URL(`file://${dir}/k.wasm`) };
+    const e = await resolveKernel('wasm-garbled', 'module', [choice, JS]).catch((x) => x);
+    expect(e.code).toBe('kernel-load-failed');
+    expect(e.cause).toBeInstanceOf(WebAssembly.CompileError);
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const r = await resolveKernel('auto', 'module', [choice, JS]);
+    expect(r.choice.id).toBe('js');
+    warn.mockRestore();
+  });
 });
