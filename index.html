@@ -212,9 +212,9 @@
       $('error').classList.remove('show');
       history.replaceState(null, '', `?model=${id}`);
       $('status').textContent = `loading ${id}…`;
-      await detector.setModel(id);
-      if (detector.model !== model) { // the switch failed (onError showed why): the old model is still running
-        model = detector.model;
+      const running = await detector.setModel(id); // the model running afterwards; null before start()
+      if (running && running !== id) { // the switch failed (onError showed why): the old model is still running
+        model = running;
         showPicked();
         history.replaceState(null, '', `?model=${model}`);
       }

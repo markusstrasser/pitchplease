@@ -172,9 +172,10 @@ export interface Detector {
   /**
    * Open the microphone (or use `source`) and start detecting. Call it from a click or key handler; a context that
    * still starts suspended resumes on the next click or key press. Calls made while starting or running share that
-   * outcome. Resolves once detecting (with onError, also once a failure went there); rejects on failure otherwise.
+   * outcome. Resolves true once the engine runs, false if start failed (the error went to onError) or stop()
+   * cancelled it. Without onError, a failure rejects instead.
    */
-  start(source?: MediaStreamLike): Promise<void>;
+  start(source?: MediaStreamLike): Promise<boolean>;
   /** Stop detecting, release the microphone and clear the pause. A start() still opening is cancelled quietly. */
   stop(): void;
   /** Pause or resume; returns the new paused state. */
@@ -182,8 +183,10 @@ export interface Detector {
   /**
    * Switch models while running, without asking for the microphone again: the new model takes over once it runs; if
    * it cannot, the old one keeps running and the error is reported. Before start(), it selects and preloads.
+   * Resolves the model running afterwards: `id` on success, the old model if the switch failed (with onError), null
+   * if nothing runs (not started, or stopped meanwhile). Without onError, a failure rejects instead.
    */
-  setModel(id: ModelId): Promise<void>;
+  setModel(id: ModelId): Promise<ModelId | null>;
   readonly paused: boolean;
   readonly running: boolean;
   /** The selected model. */

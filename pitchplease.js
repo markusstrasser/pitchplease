@@ -461,13 +461,14 @@ export function create(options = {}) {
     const stream = input ?? await openMicrophone();
     s.stream = stream;
     s.ownStream = input == null;
-    if (session !== s) { release(s); return; }
+    if (session !== s) { release(s); return false; }
     s.source = connectSource(s, AC);
     await within(resumed, RESUME_WAIT_MS);
-    if (session !== s) return;
+    if (session !== s) return false;
     if (s.ctx.state === 'suspended') wakeOnGesture(s);
     const eng = await buildEngine(s, model, () => session !== s);
     if (eng) install(s, eng);
+    return s.running; // false if a callback stopped it during install
   }
 
   function start(input) {
@@ -475,9 +476,10 @@ export function create(options = {}) {
     const s = { ctx: null, source: null, stream: null, ownStream: false, engine: null, running: false, unwake: null, started: null };
     session = s;
     s.started = open(s, input).catch((e) => {
-      if (session !== s) return; // stop() cancelled this start: nothing to report
+      if (session !== s) return false; // stop() cancelled this start: nothing to report
       teardown(); // first, so that onError can call start() again
       fail(coded(e));
+      return false;
     });
     return s.started;
   }
@@ -492,32 +494,41 @@ export function create(options = {}) {
     return paused;
   }
 
+  // The model whose engine runs now, or null.
+  const runningModel = () => (session?.running ? session.engine.model : null);
+
+  // Resolves the model running afterwards: id on success, the old model if the switch failed, null if none runs.
   async function setModel(id) {
     let m;
-    try { m = getModel(id); } catch (e) { fail(e); return; }
-    if (m.id === model) return;
+    try { m = getModel(id); } catch (e) { fail(e); return runningModel(); }
+    if (m.id === model) {
+      if (session && !session.running) await session.started.catch(() => {});
+      return runningModel();
+    }
     const prev = model;
     model = m.id;
     const s = session;
     if (!s) { // not started: select it, and warm the cache for start()
       if (m.id !== 'fft') loadModel(m.id, options.modelBaseUrl).catch(() => {});
-      return;
+      return null;
     }
     const swap = ++swaps;
     const stale = () => session !== s || swap !== swaps;
     try {
       if (!s.running) await s.started.catch(() => {}); // starting: it may build this model itself
-      if (stale() || !s.running || s.engine.model === m.id) return;
+      if (stale() || !s.running || s.engine.model === m.id) return runningModel();
       const next = await buildEngine(s, m.id, stale);
-      if (!next) return;
+      if (!next) return runningModel();
       if (heldChord) { heldChord = null; call(onChordEnd); } // the old engine still runs during this callback
-      if (stale()) { next.stop(); return; }
+      if (stale()) { next.stop(); return runningModel(); }
       const old = s.engine;
       install(s, next); // the new engine is ready: it takes over, and the old one retires
       old.stop();
+      return runningModel();
     } catch (e) {
       if (swap === swaps) model = session === s && s.engine ? s.engine.model : prev;
       fail(coded(e));
+      return runningModel();
     }
   }
 

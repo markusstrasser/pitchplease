@@ -342,3 +342,35 @@ describe('errors are always coded', () => {
     expect(e.cause.message).toBe('too many AudioContexts');
   });
 });
+
+describe('start() and setModel() resolve to what happened', () => {
+  test('start(): true once detecting; false when it failed (with onError) or stop() cancelled it', async () => {
+    const d = P.create();
+    expect(await d.start()).toBe(true);
+    expect(await d.start()).toBe(true); // already running: the same outcome
+    d.stop();
+    const cancelled = d.start();
+    d.stop();
+    expect(await cancelled).toBe(false);
+    env.restore(); env = installBrowser({ micError: 'NotAllowedError' });
+    const errors = [];
+    expect(await P.create({ onError: (e) => errors.push(e) }).start()).toBe(false);
+    expect(errors.map((e) => e.code)).toEqual(['mic-denied']);
+  });
+
+  test('setModel(): the model running afterwards (null when nothing runs)', async () => {
+    const errors = [];
+    const d = P.create({ modelBaseUrl: brokenPianoDir(), onError: (e) => errors.push(e.code) });
+    expect(await d.setModel('fft')).toBe(null); // not started: selected, nothing runs yet
+    expect(await d.setModel('fast')).toBe(null);
+    await d.start();
+    expect(await d.setModel('piano')).toBe('fast'); // piano cannot be built: fast keeps running
+    expect(await d.setModel('loud')).toBe('fast'); // unknown id
+    expect(await d.setModel('fft')).toBe('fft');
+    expect(await d.setModel('fft')).toBe('fft'); // already running it
+    const p = d.setModel('fast');
+    d.stop();
+    expect(await p).toBe(null);
+    expect(errors).toEqual(['processor-error', 'unknown-model']);
+  });
+});
