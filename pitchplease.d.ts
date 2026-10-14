@@ -101,8 +101,8 @@ export interface CommonOptions {
   model?: ModelId;
   /** Override the trained models' on/off probabilities. Given only `on`, off = 0.6 * on. Ignored by 'fft'. */
   threshold?: Partial<Threshold>;
-  /** Folder that holds fast.bin, piano.bin and voice.bin, if you host the weights yourself. */
-  modelBaseUrl?: string | URL;
+  /** Folder that holds fast.bin, piano.bin and voice.bin, if you host the weights yourself (a string or a URL). */
+  modelBaseUrl?: string | { readonly href: string };
   /** Detector kernel (default 'auto'). */
   kernel?: KernelId;
   /** Frames the pitch-class set must hold before a chord is named (default 1 for trained models, 4 for 'fft'). */

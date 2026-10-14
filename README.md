@@ -1,197 +1,238 @@
 # PitchPlease
 
-Polyphonic pitch detection in the browser. No dependencies, no build step.
-
-**~16ms latency** at 60fps. Detects multiple simultaneous pitches and chords in real-time.
+Polyphonic pitch and chord detection in the browser. Pick the detector that fits your app: three trained models that
+run in an AudioWorklet, or the tiny FFT peak picker from v2. No dependencies, no build step.
 
 **[Try the live demo →](https://markusstrasser.github.io/pitchplease/)**
 
-## Install
+## Quick start
 
 ```bash
 npm install @markusstrasser/pitchplease
 ```
 
-Or just copy `pitchplease.js` to your project. That's it.
+```js
+import { create } from '@markusstrasser/pitchplease';
 
-## Browser Requirements
+const detector = create({ onNotes: (notes) => console.log(notes.map((n) => n.name).join(' ')) }); // 'E2 A2 C#3'
+button.onclick = () => detector.start(); // asks for the microphone
+```
 
-- **HTTPS or localhost required** - microphone access blocked on HTTP
-- **User gesture required** - `start()` must be called from click/tap handler
-- Chrome, Firefox, Safari, Edge all supported
-- Mobile browsers work but may have higher latency
-
-## Usage
-
-### Plain HTML
+Without a bundler, import it from a CDN (or from a copy of the package folder) in a module script:
 
 ```html
-<script src="pitchplease.js"></script>
-<script>
-  const detector = PitchPlease.create({
-    onUpdate: (data) => console.log(data.pitchClasses),
-    onChord: (chord) => console.log(chord.full),  // "Cmaj7"
-  });
-
-  // Must be called from user gesture (click/tap)
-  button.onclick = () => detector.start();
+<script type="module">
+  import { create } from 'https://cdn.jsdelivr.net/npm/@markusstrasser/pitchplease@3/pitchplease.js';
+  const detector = create({ onChord: (chord) => (document.title = chord.full) });
+  document.querySelector('button').onclick = () => detector.start();
 </script>
 ```
 
-### Svelte
+The page must be served over `https://` or from `http://localhost`, and `start()` must run inside a click or key
+handler: browsers require both for the microphone.
 
-```svelte
-<script>
-  import { onMount } from 'svelte';
+## Pick a model
 
-  let chord = '';
-  let detector;
+| model | best for | download | CPU | piano F1 / latency | guitar F1 / latency | singing F1 / latency |
+|---|---|---|---|---|---|---|
+| `fast` (default) | any device, chords, singing alone | 495 KB | 1× | 0.679 / 50 ms | 0.784 / 40 ms | **0.911 / 37 ms** |
+| `piano` | piano (and guitar) accuracy | 545 KB | 2.1× | **0.729 / 40 ms** | 0.818 / 33 ms | 0.872 / 44 ms |
+| `voice` | singing together with instruments | 545 KB | 2.1× | 0.726 / 41 ms | **0.821 / 34 ms** | 0.886 / 45 ms |
+| `fft` | no download, lightest CPU (v2's engine) | none | tiny | 0.375 / 260 ms | 0.347 / 155 ms | 0.546 / 145 ms |
 
-  onMount(() => {
-    const script = document.createElement('script');
-    script.src = '/pitchplease.js';
-    script.onload = () => {
-      detector = PitchPlease.create({
-        onChord: (c) => chord = c.full,
-      });
-    };
-    document.head.appendChild(script);
-  });
-
-  function start() {
-    detector?.start();
-  }
-</script>
-
-<button on:click={start}>Start</button>
-<p>{chord}</p>
+```js
+const detector = create({ model: 'piano', onNotes });
+await detector.setModel('voice'); // switch live, without asking for the microphone again
 ```
 
-### React
+How to read the table:
 
-```jsx
-import { useEffect, useRef, useState } from 'react';
+- **Scores** are measured on held-out test recordings the models never trained on: 25 MAESTRO piano excerpts,
+  20 GuitarSet guitar excerpts and 12 Dagstuhl ChoirSet solo singers. F1 is frame-level note F1 at each model's
+  operating point. Latency is the median time from a note's onset to its first detected frame, with missed notes
+  counted as never detected. The FFT picker misses 41% of piano onsets; over the notes it does detect, its median is
+  150 ms.
+- **CPU** is compute per second of audio relative to `fast`. `piano` and `voice` cost 2.1× as much in multiply-adds
+  and in measured time. In Chrome on an Apple M3 Pro under heavy load, the audio thread spent 29% of real time on `fast`
+  and 69% on `piano` or `voice`. On an average laptop the plain-JavaScript kernel may not keep up with `piano` or
+  `voice`; a WASM-SIMD kernel, expected to be about twice as fast, is in progress. Read `detector.stats.cpuLoad` and
+  fall back to `fast` when it stays above 0.8.
+- **`voice`** accepts sung notes about as well as `fast` on the vocadito set (89.1% vs 89.7% of notes, median 71 vs
+  72 ms), while scoring close to `piano` on piano and guitar. On a newer singer set (M4Singer) it picks a neighbouring
+  wrong note less often (46% vs 53% of targets) but accepts slightly fewer notes, slightly later (95.3% vs 96.7%;
+  131 vs 125 ms), so parity on new singers is not established. For unaccompanied singing, `fast` scores highest.
+- **Operating point**: each trained model turns a key on when its probability rises above `on` and keeps it on until it
+  falls below `off` (`fast` 0.7/0.42, `piano` 0.6/0.36, `voice` 0.65/0.39). Override with `threshold: { on, off }`.
 
-export function PitchDetector() {
-  const [chord, setChord] = useState('');
-  const detector = useRef(null);
+The same facts are exported for building a picker:
 
-  useEffect(() => {
-    const script = document.createElement('script');
-    script.src = '/pitchplease.js';
-    script.onload = () => {
-      detector.current = window.PitchPlease.create({
-        onChord: (c) => setChord(c.full),
-      });
-    };
-    document.head.appendChild(script);
-  }, []);
-
-  return (
-    <>
-      <button onClick={() => detector.current?.start()}>Start</button>
-      <p>{chord}</p>
-    </>
-  );
-}
-```
-
-### Node/CommonJS (for testing only - no audio in Node)
-
-```javascript
-const PitchPlease = require('@markusstrasser/pitchplease');
-const chord = PitchPlease.matchChord([0, 4, 7]); // { full: 'C' }
+```js
+import { models } from '@markusstrasser/pitchplease';
+// [{ id: 'fast', label: 'Fast', default: true, useCase: '…', sizeKB: 495, relativeCost: 1, latencyMs: 50,
+//    pianoF1: 0.679, guitarF1: 0.784, voiceF1: 0.911, threshold: { on: 0.7, off: 0.42 } }, …]
 ```
 
 ## API
 
-### `PitchPlease.create(options)`
+### `create(options)` → detector
 
-Creates a detector instance. Returns `{ start, stop, togglePause, paused }`.
+Nothing is downloaded or opened until `start()`. Invalid options throw a `PitchPleaseError` right away.
 
-```javascript
-const detector = PitchPlease.create({
-  onUpdate: (data) => {},    // called every frame (~60fps, ~16ms)
-  onChord: (chord) => {},    // called when stable chord detected
-  onChordEnd: () => {},      // called when the held chord clears after silence
-  onError: (err) => {},      // called on errors
-  fftSize: 16384,            // FFT resolution (default: 16384)
-  stabilityFrames: 4,        // frames before chord is stable (default: 4)
-  clearAfterMs: 200,         // silence before the held chord clears (default: 200)
+```js
+const detector = create({
+  model: 'fast',             // 'fast' | 'piano' | 'voice' | 'fft'
+  onNotes(notes, frame) {},  // every detector frame (~86/s; 'fft': every animation frame): the keys that are on
+  onChord(chord) {},         // a new chord is held
+  onChordEnd() {},           // the held chord cleared after clearAfterMs of silence
+  onUpdate(data) {},         // v2's per-frame payload (see below)
+  onError(err) {},           // every error; without it, start() and setModel() reject instead
+  threshold: { on, off },    // trained models: override the operating point (only `on` given: off = 0.6 * on)
+  clearAfterMs: 200,         // silence before the held chord clears
+  stabilityFrames: 1,        // frames the pitch-class set must hold before a chord is named (fft default: 4)
+  modelBaseUrl: undefined,   // a folder holding fast.bin, piano.bin, voice.bin if you host the weights yourself
+  kernel: 'auto',            // detector kernel; 'auto' picks the fastest this browser supports
+  fftSize: 16384,            // 'fft' only
 });
-
-await detector.start();      // request mic, start detection
-detector.stop();             // stop and release mic
-detector.togglePause();      // pause/resume
-detector.paused;             // boolean
 ```
 
-### `onUpdate` data
+| detector | |
+|---|---|
+| `await start(stream?)` | Opens the microphone (raw: no echo cancellation, noise suppression or gain control) or uses the `MediaStream` you pass. Downloads the model while the permission prompt shows. |
+| `stop()` | Stops and releases the microphone (a stream you passed is left running). `start()` works again. |
+| `togglePause()` | Pauses or resumes; returns the new paused state. |
+| `await setModel(id)` | Swaps models while running: the new model starts, then the old one stops; the mic stays open. Before `start()`, it selects the model and preloads its weights. |
+| `model`, `running`, `paused` | Current state. |
+| `stats` | `{ model, kernel, cpuLoad, framesPerSecond, sampleRate }`. `cpuLoad` is detector time / audio time, measured in the audio thread (`fft`: on the main thread). |
 
-```javascript
+**Notes** (`onNotes`) are `{ midi, name, pitchClass, prob }`, lowest first: `{ midi: 61, name: 'C#4', pitchClass: 1,
+prob: 0.93 }`. `prob` is the model's probability for that key; for `fft` it is the harmonic score (0.5–1].
+
+**Frames** (`onNotes`' second argument, and what `analyze()` returns):
+
+```js
 {
-  spectrum,      // Float32Array - raw FFT magnitudes
-  binMidi,       // Float32Array - MIDI note for each FFT bin
-  fundMidis,     // Float32Array - detected fundamental pitches
-  fundCount,     // number - how many pitches detected
-  pitchClasses,  // number[] - unique pitch classes [0-11]
-  stable,        // boolean - has detection stabilized?
-  chord,         // object | null - held chord: kept until another chord matches, null after clearAfterMs of silence
-  maxEnergy,     // number - loudest FFT bin this frame
+  time,          // seconds into the audio
+  emitTime,      // when the frame became available; emitTime - time = the detector's own latency
+  probs,         // Float32Array(88): every key's probability, A0 (index 0) to C8 (index 87); null for 'fft'
+  notes,         // the keys that are on
+  pitchClasses,  // their unique pitch classes, ascending
+  stable,        // the pitch-class set has held for stabilityFrames
+  chord,         // the held chord or null
 }
 ```
 
-### `chord` object
+**Chords** are `{ root: 'C', rootPc: 0, name: 'Maj7', abbrev: 'maj7', full: 'Cmaj7' }`, matched exactly against 22
+templates: triads (major, minor, dim, aug, sus4, sus2), sevenths (maj7, 7, m7, m(maj7), dim7, ø7, aug7), sixths (6,
+m6) and extensions (add9, madd9, 9, m9, maj9, 11, 13). A chord stays held until another chord matches, and clears
+after `clearAfterMs` with no notes.
 
-```javascript
-{
-  root: 'C',        // note name
-  rootPc: 0,        // pitch class (0-11)
-  name: 'Major',    // full chord name
-  abbrev: '',       // suffix (m, maj7, dim, etc)
-  full: 'C',        // root + abbrev ("Cmaj7", "F#m", etc)
-}
+**`onUpdate`** keeps v2's payload: `spectrum, binMidi, fundMidis, fundCount, pitchClasses, stable, chord, maxEnergy,
+threshold, peakBins, peakEnergies, peakCount`, plus `notes`, `probs` and `model`. For trained models, `spectrum` holds
+the 88 key probabilities and `binMidi` their MIDI numbers (21–108), so v2 spectrum drawing code still works.
+
+### `analyze(samples, sampleRate, options?)` → `Promise<Frame[]>`
+
+Detects notes in recorded audio, in the browser or in Node. It accepts a `Float32Array` with its sample rate, or an
+`AudioBuffer` (`analyze(buffer, options)`; channels are mixed down). 48 kHz and 22.05 kHz go straight in; any other
+rate is resampled first. Options are the same as `create()`'s (model, threshold, …).
+
+```js
+import { analyze } from '@markusstrasser/pitchplease';
+
+const audio = await new AudioContext().decodeAudioData(await (await fetch('take.wav')).arrayBuffer());
+const frames = await analyze(audio, { model: 'piano' });
+const chords = frames.filter((f, i) => f.chord && f.chord !== frames[i - 1]?.chord).map((f) => [f.time, f.chord.full]);
 ```
+
+It runs on the calling thread, about 3× faster than real time for `fast` on an Apple M3 Pro, and yields to the event
+loop as it goes; put long files in a Worker.
+
+### Errors
+
+Errors are `PitchPleaseError`s with a stable `code` and a message that says what to do:
+
+| code | when |
+|---|---|
+| `mic-denied`, `mic-not-found`, `mic-busy`, `mic-failed` | the microphone could not be opened |
+| `insecure-context` | the page is not on https:// or localhost |
+| `worklet-unsupported` | no AudioWorklet in this browser (use `model: 'fft'`) |
+| `model-load-failed` | the weights could not be fetched (check that `models/` is served, or set `modelBaseUrl`) |
+| `worklet-load-failed` | `engine/worklet.js` could not be loaded |
+| `processor-error` | the detector stopped in the audio thread |
+| `no-web-audio` | `start()` outside a browser (use `analyze()`) |
+| `unknown-model`, `bad-threshold`, `bad-options`, `bad-input`, `bad-source`, `unknown-kernel`, `kernel-unsupported`, `kernel-load-failed` | invalid arguments or kernel problems |
 
 ### Utilities
 
-```javascript
-PitchPlease.midiToNote(60)           // 'C'
-PitchPlease.midiToNote(60, true)     // 'C4'
-PitchPlease.matchChord([0, 4, 7])    // { full: 'C', ... }
-PitchPlease.pitchClassToColor(0)     // 'hsla(60,80%,50%,1)'
-PitchPlease.NOTE_NAMES               // ['C','C#','D',...]
+```js
+import { matchChord, createChordHold, midiToNote, pitchClassToColor, NOTE_NAMES, version } from '@markusstrasser/pitchplease';
+midiToNote(61)            // 'C#'
+midiToNote(61, true)      // 'C#4'
+matchChord([0, 4, 7])     // { full: 'C', … }
+pitchClassToColor(0)      // 'hsla(60,80%,50%,1)'
 ```
 
-## Chord Types
+## Bundlers, CDNs and self-hosting
 
-**Triads:** Major, Minor, Dim, Aug, Sus4, Sus2, 5
-**Sevenths:** Maj7, 7, m7, m(maj7), dim7, ø7, aug7
-**Sixths:** 6, m6
-**Extensions:** add9, madd9, 9, m9, maj9, 11, 13
+The package is an ES module. The AudioWorklet (`engine/worklet.js`) and the weights (`models/*.bin`) are separate
+files that the code locates with `new URL('./…', import.meta.url)`, which bundlers understand. Checked with no
+configuration: Vite 8 (dev server and production build), webpack 5, a plain `<script type="module">`, and a
+cross-origin CDN import. Each model file downloads only when that model is used.
 
-## Performance
+- **webpack** warns that the three `.bin` files exceed its 244 KiB asset hint. They are fetched on demand, so the
+  warning can be ignored (or silenced with `performance: { hints: false }`).
+- **Self-hosting the weights**: copy `models/` anywhere and pass `modelBaseUrl: 'https://cdn.example.com/pp/'`.
+- **Cross-origin**: the worklet and the weights need CORS headers when served from another origin (public npm CDNs
+  send them).
+- **Node**: `analyze()` works in Node ≥ 20.19 and Bun; `require('@markusstrasser/pitchplease')` works too.
+- **TypeScript**: `pitchplease.d.ts` ships with the package and needs no DOM types.
 
-- **~16ms** per frame (60fps)
-- FFT: 16384 bins for 3Hz resolution at 48kHz sample rate
-- Processes MIDI range 24-96 (C1-C7)
-- Typical CPU: <5% on modern hardware
+## Migrating from v2
 
-## Dev
-
-```bash
-bun dev-testing.js
-# http://localhost:3000
-```
+- **The default detector changed.** v3 runs the trained `fast` model. Pass `model: 'fft'` to keep v2's detector; it is
+  v2's code, and a test runs v2 and v3 side by side to check that every frame matches.
+- **It is an ES module.** Replace `<script src="pitchplease.js">` and the global `PitchPlease` with
+  `<script type="module">` and `import { create } from './pitchplease.js'` (or `import PitchPlease from …` to keep the
+  `PitchPlease.create` style). Copy the whole package folder (`pitchplease.js`, `engine/`, `models/`), not just
+  `pitchplease.js`. CommonJS `require()` still works in Node ≥ 20.19.
+- **New**: `onNotes(notes, frame)`, `setModel()`, `models`, `analyze()`, `stats`, `running`, `model`, `threshold`,
+  `modelBaseUrl`, error codes.
+- **Errors**: `start()` still calls `onError` when you pass one. Without `onError`, `start()` and `setModel()` now
+  reject instead of logging.
+- **Chords** come from the same `matchChord` and `createChordHold`. With trained models, `stabilityFrames` defaults to
+  1, because the models' on/off hysteresis already steadies the notes; `fft` keeps 4.
+- **Behaviour fixes**: the AudioContext is created at 48 kHz inside the click, before the permission prompt, so it is
+  not left suspended; a pause and resume within one animation frame no longer starts a second detection loop.
 
 ## How it works
 
-1. FFT via Web Audio `AnalyserNode` (16384 bins)
-2. Adaptive noise floor estimation
-3. Peak detection with parabolic interpolation
-4. Harmonic sieve groups peaks into fundamentals
-5. Pitch class extraction and stability check
-6. Template matching against chord intervals
+The trained models are a streaming port of a basic-pitch-style network (constant-Q transform, small convolutional head,
+88 key probabilities every 11.6 ms) with heads fine-tuned on real recordings. It runs in an AudioWorklet on the audio
+thread: 48 kHz input is resampled to 22.05 kHz inside the detector, each frame looks ahead 23 ms, and decoding (on/off
+hysteresis per key, then chord matching) happens on the main thread. The three models share the architecture; `piano`
+and `voice` add a side convolution that doubles the compute.
+
+The `fft` model is v2: a Web Audio AnalyserNode spectrum (16384 bins), an adaptive noise floor, peak picking with
+parabolic interpolation, a harmonic sieve that groups peaks into fundamentals, then the same chord matching.
+
+## Browser support
+
+The trained models need AudioWorklet (Chrome and Edge 66+, Firefox 76+, Safari 14.1+); `fft` runs wherever the Web
+Audio API does. Both need a secure page (https or localhost) and a user gesture for the microphone. The trained models
+have not been tested on phones yet; `fast` leaves the most CPU headroom there.
+
+## Development
+
+```bash
+bun dev-testing.js     # demo at http://localhost:3000
+npm test               # checks engine/worklet.js is current, then bun test
+npm run test:ui        # headless Chrome with a fake microphone, all four models, screenshots in tests/ui-shots/
+npm run build          # regenerate engine/worklet.js after editing engine/processor.js or the kernel
+```
+
+`engine/worklet.js` is generated: the worklet must be a single file because bundlers copy it as an asset without its
+imports. The detector kernel is swappable in one place, `engine/kernels.js` (a WASM-SIMD kernel slots in there). The
+vendored kernel's source and hash are in `engine/vendor.json`.
 
 ## License
 

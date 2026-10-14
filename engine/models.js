@@ -10,19 +10,19 @@ import { fetchBytes } from './load.js';
 export const MODELS = Object.freeze([
   {
     id: 'fast', label: 'Fast', default: true,
-    useCase: 'Any device, chords, the safe default.',
+    useCase: 'Any device, chords, the safe default. Also the most accurate on unaccompanied singing.',
     sizeKB: 495, relativeCost: 1, latencyMs: 50, pianoF1: 0.679, guitarF1: 0.784, voiceF1: 0.911,
     threshold: { on: 0.7, off: 0.42 },
   },
   {
     id: 'piano', label: 'Piano', default: false,
-    useCase: 'Best on piano and guitar. About twice the compute of fast: wants a fast laptop or desktop until the WASM kernel ships.',
+    useCase: 'Most accurate on piano, strong on guitar, weaker on singing. About twice the compute of fast: wants a fast laptop or desktop until the WASM kernel ships.',
     sizeKB: 545, relativeCost: 2.1, latencyMs: 40, pianoF1: 0.729, guitarF1: 0.818, voiceF1: 0.872,
     threshold: { on: 0.6, off: 0.36 },
   },
   {
     id: 'voice', label: 'Voice', default: false,
-    useCase: 'Singing together with instruments: piano and guitar close to the piano model, sung notes accepted about as well as by fast. Same compute as piano.',
+    useCase: 'Singing together with instruments: piano and guitar on par with the piano model, sung notes accepted about as well as by fast. Same compute as piano.',
     sizeKB: 545, relativeCost: 2.1, latencyMs: 41, pianoF1: 0.726, guitarF1: 0.821, voiceF1: 0.886,
     threshold: { on: 0.65, off: 0.39 },
   },
@@ -53,7 +53,7 @@ const DEFAULT_URLS = {
 export function modelUrl(id, modelBaseUrl) {
   if (!DEFAULT_URLS[id]) throw new PitchPleaseError('unknown-model', `Model '${id}' has no weights file.`);
   if (modelBaseUrl == null) return DEFAULT_URLS[id]();
-  let base = String(modelBaseUrl);
+  let base = typeof modelBaseUrl === 'object' && modelBaseUrl.href ? modelBaseUrl.href : String(modelBaseUrl);
   if (!base.endsWith('/')) base += '/';
   return new URL(`${id}.bin`, new URL(base, globalThis.location?.href));
 }
