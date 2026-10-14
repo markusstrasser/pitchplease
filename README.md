@@ -54,9 +54,10 @@ How to read the table:
   150 ms.
 - **CPU** is compute per second of audio relative to `fast`. `piano` and `voice` cost 2.1× as much in multiply-adds
   and in measured time. In Chrome on an Apple M3 Pro under heavy load, the audio thread spent 29% of real time on `fast`
-  and 69% on `piano` or `voice`. On an average laptop the plain-JavaScript kernel may not keep up with `piano` or
-  `voice`; a WASM-SIMD kernel, expected to be about twice as fast, is in progress. Read `detector.stats.cpuLoad` and
-  fall back to `fast` when it stays above 0.8.
+  and 69% on `piano` or `voice`; in Firefox on the same machine, 53% on `fast` and just over 100% on `piano` and
+  `voice`, more than the real-time budget. On an average laptop the plain-JavaScript kernel may not keep up with
+  `piano` or `voice`; a WASM-SIMD kernel, expected to be about twice as fast, is in progress. Read
+  `detector.stats.cpuLoad` and fall back to `fast` when it stays above 0.8.
 - **`voice`** accepts sung notes about as well as `fast` on the vocadito set (89.1% vs 89.7% of notes, median 71 vs
   72 ms), while scoring close to `piano` on piano and guitar. On a newer singer set (M4Singer) it picks a neighbouring
   wrong note less often (46% vs 53% of targets) but accepts slightly fewer notes, slightly later (95.3% vs 96.7%;
