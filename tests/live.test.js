@@ -6,11 +6,13 @@ import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import * as P from '../pitchplease.js';
 import { packModel } from '../engine/models.js';
+import { pickKernel } from '../engine/kernels.js';
 import { installBrowser, settle } from './helpers/browser.js';
 import { readWav } from './helpers/wav.js';
 
 const fixture = (name) => readWav(new URL(`./fixtures/${name}.wav`, import.meta.url).pathname).samples;
 const CHORD = fixture('chord-a-major'), PIANO = fixture('piano-maestro');
+const KERNEL = pickKernel().id; // what 'auto' runs here
 
 async function until(cond, ms = 10_000) {
   const t0 = Date.now();
@@ -32,7 +34,7 @@ describe('trained models in the (scripted) AudioWorklet', () => {
     env.ctx.render(PIANO);
     const offline = await P.analyze(PIANO, 48000);
     await until(() => frames.length >= offline.length - 3); // live has no end-of-input flush
-    expect(d.stats).toMatchObject({ model: 'fast', kernel: 'js', sampleRate: 48000 });
+    expect(d.stats).toMatchObject({ model: 'fast', kernel: KERNEL, sampleRate: 48000 });
     d.stop();
     expect(d.stats).toMatchObject({ model: 'fast', kernel: null, sampleRate: 0 });
     expect(frames.length).toBeGreaterThan(300);
@@ -75,7 +77,7 @@ describe('trained models in the (scripted) AudioWorklet', () => {
     await d.setModel('piano');
     expect(env.state.micCalls).toBe(1);
     expect(d.model).toBe('piano');
-    expect(d.stats).toMatchObject({ model: 'piano', kernel: 'js' });
+    expect(d.stats).toMatchObject({ model: 'piano', kernel: KERNEL });
     expect(log.at(-1)).toEqual(['end']); // the held chord ends with its engine
     expect(env.ctx.sources[0].targets.has(firstNode)).toBe(false); // old node disconnected
     log.length = 0;
@@ -90,7 +92,7 @@ describe('trained models in the (scripted) AudioWorklet', () => {
     expect(env.state.raf.size).toBe(1); // the fft loop keeps scheduling animation frames
 
     await d.setModel('voice');
-    expect(d.stats).toMatchObject({ model: 'voice', kernel: 'js' });
+    expect(d.stats).toMatchObject({ model: 'voice', kernel: KERNEL });
     expect(env.state.raf.size).toBe(0); // fft loop stopped
     log.length = 0;
     env.ctx.render(CHORD);

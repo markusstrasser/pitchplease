@@ -116,6 +116,7 @@ describe('resampler', () => {
 });
 
 describe('kernel selection (the WASM seam)', () => {
+  const JS = { id: 'js', impl: 'js' };
   test('feature probes validate here; a corrupted probe does not', () => {
     expect(WebAssembly.validate(SIMD_PROBE)).toBe(true);
     expect(WebAssembly.validate(RELAXED_SIMD_PROBE)).toBe(true);
@@ -125,23 +126,23 @@ describe('kernel selection (the WASM seam)', () => {
   });
 
   test("'auto' picks the first supported choice; the JS kernel is the floor", () => {
-    expect(pickKernel().id).toBe('js');
-    expect(CHOICES.at(-1)).toMatchObject({ id: 'js', impl: 'js' });
+    expect(pickKernel()).toBe(CHOICES.find(kernelSupported));
+    expect(CHOICES.at(-1)).toMatchObject({ id: 'js', impl: 'js' }); // needs no WebAssembly at all
     const bad = Uint8Array.from(SIMD_PROBE); bad[bad.length - 2] = 0xff;
     const choices = [{ id: 'wasm-new', impl: 'wasm', probe: bad }, { id: 'wasm-simd', impl: 'js', probe: SIMD_PROBE }, ...CHOICES];
     expect(pickKernel('auto', choices).id).toBe('wasm-simd');
-    expect(pickKernel('auto', [choices[0], ...CHOICES]).id).toBe('js');
+    expect(pickKernel('auto', [choices[0], JS]).id).toBe('js');
     expect(() => pickKernel('wasm-new', choices)).toThrow(/needs a WebAssembly feature/);
   });
 
   test("a kernel whose .wasm fails to load falls back under 'auto' (with a warning), fails when named", async () => {
     const broken = { id: 'wasm-broken', impl: 'js', probe: SIMD_PROBE, wasm: () => new URL('file:///nonexistent-pp/incport.wasm') };
     const warn = spyOn(console, 'warn').mockImplementation(() => {});
-    const r = await resolveKernel('auto', 'bytes', [broken, ...CHOICES]);
+    const r = await resolveKernel('auto', 'bytes', [broken, JS]);
     expect(r.choice.id).toBe('js');
     expect(warn.mock.calls[0][0]).toMatch(/Could not load the 'wasm-broken' kernel.*Falling back to the 'js' kernel/);
     warn.mockRestore();
-    const e = await resolveKernel('wasm-broken', 'bytes', [broken, ...CHOICES]).catch((x) => x);
+    const e = await resolveKernel('wasm-broken', 'bytes', [broken, JS]).catch((x) => x);
     expect(e.code).toBe('kernel-load-failed');
   });
 
