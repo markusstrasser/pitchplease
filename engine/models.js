@@ -16,7 +16,7 @@ export const MODELS = Object.freeze([
   },
   {
     id: 'piano', label: 'Piano', default: false,
-    useCase: 'Most accurate on piano, strong on guitar, weaker on singing. About twice the compute of fast: wants a fast laptop or desktop until the WASM kernel ships.',
+    useCase: 'Most accurate on piano, strong on guitar, weaker on singing. About twice the compute of fast.',
     sizeKB: 545, relativeCost: 2.1, latencyMs: 40, pianoF1: 0.729, guitarF1: 0.818, voiceF1: 0.872,
     threshold: { on: 0.6, off: 0.36 },
   },

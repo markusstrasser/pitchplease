@@ -5,21 +5,21 @@
 //
 // The main thread picks one kernel (pickKernel here; fetching in engine/kernel-load.js), and both the AudioWorklet
 // (engine/processor.js, bundled into engine/worklet.js) and analyze() run that choice. The worklet gets the raw .wasm
-// bytes in processorOptions and compiles them synchronously (new WebAssembly.Module), which avoids posting a
-// compiled WebAssembly.Module to a worklet (unverified on Safari and Firefox).
+// bytes in processorOptions and compiles them synchronously (new WebAssembly.Module) rather than receiving a compiled
+// WebAssembly.Module (checked in Chrome 155, Firefox 157 and WebKit 27.2).
 //
-// To add the WASM-SIMD kernel (pitchtest/web/incport-wasm.js and its .wasm builds, once committed there):
-//   1. npm run vendor -- incport-wasm.js incport.wasm incport-relaxed.wasm   (copies them, records the commit)
-//   2. uncomment the wasmKernel import and its IMPLS entry below
-//   3. uncomment the two CHOICES entries (one per .wasm build, best first, each with the feature probe it needs)
-//   4. add their ids to KernelId in pitchplease.d.ts (a test compares the two)
-//   5. npm run build (regenerates engine/worklet.js), npm test (parity runs every supported choice), npm run test:ui
-// The kernel module must stay bundler-safe: no import('node:…') and only literal `new URL('./x', import.meta.url)`.
+// The kernels are vendored from pitchtest/web (engine/vendor.json records each file's commit). To update one, or to
+// add a kernel:
+//   1. npm run vendor -- incport-wasm.js incport.wasm incport-relaxed.wasm   (committed files only; records the commit)
+//   2. a new kernel module: import it below and add it to IMPLS; a new build: add a CHOICES entry (best first, with
+//      the feature probe it needs) and its id to KernelId in pitchplease.d.ts (a test compares the two)
+//   3. npm run build (regenerates engine/worklet.js), npm test (parity runs every supported choice), npm run test:ui
+// A kernel module must stay bundler-safe: no import('node:…') and only literal `new URL('./x', import.meta.url)`.
 import { PitchPleaseError } from './errors.js';
 import * as jsKernel from './incport.js';
-// import * as wasmKernel from './incport-wasm.js';
+import * as wasmKernel from './incport-wasm.js';
 
-export const IMPLS = { js: jsKernel /* , wasm: wasmKernel */ };
+export const IMPLS = { js: jsKernel, wasm: wasmKernel };
 
 // Tiny modules for WebAssembly.validate (synchronous, microseconds).
 // simd128: (func (result v128) i32.const 0 i8x16.splat i8x16.popcnt)
@@ -32,8 +32,8 @@ export const RELAXED_SIMD_PROBE = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1
 // Best first. impl: a key of IMPLS; probe: bytes WebAssembly.validate must accept; wasm: the binary's URL (a static
 // `new URL('./…', import.meta.url)` so bundlers emit the file).
 export const CHOICES = [
-  // { id: 'wasm-relaxed', impl: 'wasm', probe: RELAXED_SIMD_PROBE, wasm: () => new URL('./incport-relaxed.wasm', import.meta.url) },
-  // { id: 'wasm-simd', impl: 'wasm', probe: SIMD_PROBE, wasm: () => new URL('./incport.wasm', import.meta.url) },
+  { id: 'wasm-relaxed', impl: 'wasm', probe: RELAXED_SIMD_PROBE, wasm: () => new URL('./incport-relaxed.wasm', import.meta.url) },
+  { id: 'wasm-simd', impl: 'wasm', probe: SIMD_PROBE, wasm: () => new URL('./incport.wasm', import.meta.url) },
   { id: 'js', impl: 'js' },
 ];
 

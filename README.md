@@ -52,18 +52,30 @@ How to read the table:
   operating point. Latency is the median time from a note's onset to its first detected frame, with missed notes
   counted as never detected. The FFT picker misses 41% of piano onsets; over the notes it does detect, its median is
   150 ms.
-- **CPU** is compute per second of audio relative to `fast`. `piano` and `voice` cost 2.1× as much in multiply-adds
-  and in measured time. In Chrome on an Apple M3 Pro under heavy load, the audio thread spent 29% of real time on `fast`
-  and 69% on `piano` or `voice`; in Firefox on the same machine, 53% on `fast` and just over 100% on `piano` and
-  `voice`, more than the real-time budget. On an average laptop the plain-JavaScript kernel may not keep up with
-  `piano` or `voice`; a WASM-SIMD kernel, expected to be about twice as fast, is in progress. Read
-  `detector.stats.cpuLoad` and fall back to `fast` when it stays above 0.8.
+- **CPU** is compute per second of audio relative to `fast`: `piano` and `voice` do 2.1× the multiply-adds. The
+  detector runs as WebAssembly with SIMD where the browser has it, otherwise as plain JavaScript (`stats.kernel` says
+  which). Measured audio-thread load is in the table below. Read `detector.stats.cpuLoad` and fall back to `fast` when
+  it stays above 0.8.
 - **`voice`** accepts sung notes about as well as `fast` on the vocadito set (89.1% vs 89.7% of notes, median 71 vs
   72 ms), while scoring close to `piano` on piano and guitar. On a newer singer set (M4Singer) it picks a neighbouring
   wrong note less often (46% vs 53% of targets) but accepts slightly fewer notes, slightly later (95.3% vs 96.7%;
   131 vs 125 ms), so parity on new singers is not established. For unaccompanied singing, `fast` scores highest.
 - **Operating point**: each trained model turns a key on when its probability rises above `on` and keeps it on until it
   falls below `off` (`fast` 0.7/0.42, `piano` 0.6/0.36, `voice` 0.65/0.39). Override with `threshold: { on, off }`.
+
+Audio-thread time as a share of real time, measured in headless browsers on an Apple M3 Pro that was busy with other
+jobs (so a quiet machine does better):
+
+| browser | kernel | `fast` | `piano` | `voice` |
+|---|---|---|---|---|
+| Chrome 155 | WebAssembly SIMD | 12% | 20% | 20% |
+| Firefox 157 | WebAssembly SIMD | 21% | 23% | 23% |
+| WebKit 27.2 (Safari's engine) | WebAssembly SIMD | 12% | 57% | 52% |
+| Chrome 155 | JavaScript | 29% | 74% | 71% |
+| Firefox 157 | JavaScript | 53% | 102% | 101% |
+
+The JavaScript kernel is the fallback for browsers without WebAssembly SIMD. In WebKit it runs `piano` at 6.6× real
+time (`fast`: 0.36×), so on Safari before 16.4 use `fast`.
 
 The same facts are exported for building a picker:
 
@@ -222,9 +234,10 @@ parabolic interpolation, a harmonic sieve that groups peaks into fundamentals, t
 
 ## Browser support
 
-The trained models need AudioWorklet (Chrome and Edge 66+, Firefox 76+, Safari 14.1+); `fft` runs wherever the Web
-Audio API does. Both need a secure page (https or localhost) and a user gesture for the microphone. The trained models
-have not been tested on phones yet; `fast` leaves the most CPU headroom there.
+The trained models need AudioWorklet (Chrome and Edge 66+, Firefox 76+, Safari 14.1+), and run fastest with
+WebAssembly SIMD (Chrome 91+, Firefox 89+, Safari 16.4+); `fft` runs wherever the Web Audio API does. Both need a secure
+page (https or localhost) and a user gesture for the microphone. Tested headless on macOS in Chrome 155, Firefox 157 and
+WebKit 27.2 (Playwright's build of Safari's engine), not yet on phones; `fast` leaves the most CPU headroom there.
 
 ## Development
 
@@ -234,12 +247,13 @@ npm test               # checks engine/worklet.js is current, then bun test --pa
 npm run test:ui        # headless Chrome with a fake microphone: all four models, then retry after a denied mic and
                        # after a failed model download; screenshots in tests/ui-shots/
 npm run build          # regenerate engine/worklet.js after editing engine/processor.js or the kernel
-npm run vendor -- incport.js   # re-vendor a kernel file from a committed ../pitchtest/web, recording its commit
+npm run vendor -- incport-wasm.js incport.wasm   # re-vendor kernel files from a committed ../pitchtest/web
 ```
 
 `engine/worklet.js` is generated: the worklet must be a single file because bundlers copy it as an asset without its
-imports. The detector kernel is swappable in one place, `engine/kernels.js` (a WASM-SIMD kernel slots in there). The
-vendored kernel's source and hash are in `engine/vendor.json`.
+imports. The detector kernels (JavaScript, and WebAssembly SIMD in a plain and a relaxed-SIMD build) are chosen in one
+place, `engine/kernels.js`. They are vendored from pitchtest; `engine/vendor.json` records each file's source commit
+and hash, and the tests compare the copies with `../pitchtest/web` when it is checked out.
 
 ## License
 

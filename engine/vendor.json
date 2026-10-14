@@ -3,5 +3,20 @@
     "from": "web/incport.js",
     "commit": "fea7a7e",
     "sha256": "b9eb1ec73cce98e726dce3c8bf8e2ab3cbd33a33576fa1f841a14081516d37f8"
+  },
+  "incport-wasm.js": {
+    "from": "web/incport-wasm.js",
+    "commit": "78a3dd1",
+    "sha256": "11621399c6cb89d4ca9261e0ade1007c8961804abf4200f60fe57764cd186a8c"
+  },
+  "incport.wasm": {
+    "from": "web/incport.wasm",
+    "commit": "78a3dd1",
+    "sha256": "e86fcbff8b20170dffb699fd84590e0fc3431f55bb22da4e003d6c266f2534c7"
+  },
+  "incport-relaxed.wasm": {
+    "from": "web/incport-relaxed.wasm",
+    "commit": "78a3dd1",
+    "sha256": "6ea4b3081e8598aa53585351309ed14320f7b6df5d6dc22c788239fcbd7b778e"
   }
 }

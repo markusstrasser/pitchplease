@@ -5,7 +5,7 @@
 export type ModelId = 'fast' | 'piano' | 'voice' | 'fft';
 
 /** Detector kernel: 'auto' picks the fastest one this runtime supports. Lists engine/kernels.js CHOICES (tested). */
-export type KernelId = 'auto' | 'js';
+export type KernelId = 'auto' | 'wasm-relaxed' | 'wasm-simd' | 'js';
 
 export interface Chord {
   /** Root note name, e.g. 'C#'. */
