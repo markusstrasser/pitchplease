@@ -1,0 +1,8 @@
+{
+  "incport.js": {
+    "from": "pitchtest/web/incport.js",
+    "commit": "fea7a7e",
+    "sha256": "b9eb1ec73cce98e726dce3c8bf8e2ab3cbd33a33576fa1f841a14081516d37f8",
+    "note": "Copied verbatim. Re-vendor by copying the file and updating this entry; tests/engine.test.js checks the hash and, when ../pitchtest is checked out, that upstream has not moved."
+  }
+}

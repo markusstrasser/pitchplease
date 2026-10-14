@@ -1,0 +1,48 @@
+// The DSP kernel seam. A kernel is a module with the API of engine/incport.js:
+//
+//   parseWeights(manifest, buffer)                       -> weights
+//   createDetector(weights, { inputRate, wasmModule })  -> { push(Float32Array) -> [{ t, emit, probs: Float32Array(88) }] }
+//
+// The main thread picks one kernel (pickKernel here; fetching in engine/kernel-load.js), and both the AudioWorklet
+// (engine/processor.js, bundled into engine/worklet.js) and analyze() run that choice. The worklet gets the raw .wasm
+// bytes in processorOptions and compiles them synchronously (new WebAssembly.Module), which avoids posting a
+// compiled WebAssembly.Module to a worklet (unverified on Safari and Firefox).
+//
+// To add the WASM-SIMD kernel (pitchtest/web/incport-wasm.js and its .wasm builds):
+//   1. copy incport-wasm.js and the .wasm files into engine/, and record them in engine/vendor.json
+//   2. import it below and register it in IMPLS as `wasm`
+//   3. add one CHOICES entry per .wasm build, best first, each with the feature probe it needs
+//   4. npm run build (regenerates engine/worklet.js) and npm test (the parity tests run every supported choice)
+import { PitchPleaseError } from './errors.js';
+import * as jsKernel from './incport.js';
+// import * as wasmKernel from './incport-wasm.js';
+
+export const IMPLS = { js: jsKernel /* , wasm: wasmKernel */ };
+
+// Tiny modules for WebAssembly.validate (synchronous, microseconds).
+// simd128: (func (result v128) i32.const 0 i8x16.splat i8x16.popcnt)
+export const SIMD_PROBE = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11]);
+// relaxed SIMD: (func (result v128) i32.const 1 i8x16.splat i32.const 2 i8x16.splat i8x16.relaxed_swizzle)
+export const RELAXED_SIMD_PROBE = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 15, 1, 13, 0, 65, 1, 253, 15, 65, 2, 253, 15, 253, 128, 2, 11]);
+
+// Best first. impl: a key of IMPLS; probe: bytes WebAssembly.validate must accept; wasm: the binary's URL (a static
+// `new URL('./…', import.meta.url)` so bundlers emit the file).
+export const CHOICES = [
+  // { id: 'wasm-relaxed', impl: 'wasm', probe: RELAXED_SIMD_PROBE, wasm: () => new URL('./incport-relaxed.wasm', import.meta.url) },
+  // { id: 'wasm-simd', impl: 'wasm', probe: SIMD_PROBE, wasm: () => new URL('./incport.wasm', import.meta.url) },
+  { id: 'js', impl: 'js' },
+];
+
+export function kernelSupported(choice) {
+  if (!choice.probe) return true;
+  try { return typeof WebAssembly === 'object' && WebAssembly.validate(choice.probe); } catch { return false; }
+}
+
+/** 'auto' -> the first supported choice; otherwise the named choice. Throws a PitchPleaseError naming the options. */
+export function pickKernel(preference = 'auto', choices = CHOICES) {
+  if (preference === 'auto') return choices.find(kernelSupported);
+  const choice = choices.find((c) => c.id === preference);
+  if (!choice) throw new PitchPleaseError('unknown-kernel', `Unknown kernel '${preference}'. Use 'auto' or one of: ${choices.map((c) => c.id).join(', ')}.`);
+  if (!kernelSupported(choice)) throw new PitchPleaseError('kernel-unsupported', `Kernel '${preference}' needs a WebAssembly feature this runtime lacks. Use kernel: 'auto' to fall back.`);
+  return choice;
+}
