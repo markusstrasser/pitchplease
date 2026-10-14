@@ -103,8 +103,10 @@ export interface CommonOptions {
   /** Which detector to run (default 'fast'). See `models`. */
   model?: ModelId;
   /**
-   * Override the trained models' on/off probabilities. Given only `on`, off = 0.6 * on; given only `off`, each
-   * model's own `on` applies. It must suit every trained model, since setModel() can switch to any. Ignored by 'fft'.
+   * Override the trained models' on/off probabilities. The values are absolute and apply to whichever trained model
+   * runs. Given only `on`, off = 0.6 * on; given only `off`, the running model's own `on` applies. create() checks it
+   * against the selected model; setModel() against the target, failing (old model kept) if it does not fit.
+   * Ignored by 'fft'.
    */
   threshold?: Partial<Threshold>;
   /**

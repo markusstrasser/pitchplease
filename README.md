@@ -99,8 +99,8 @@ const detector = create({
   onChordEnd() {},           // the held chord cleared after clearAfterMs of silence
   onUpdate(data) {},         // v2's per-frame payload (see below)
   onError(err) {},           // every error; without it, start() and setModel() reject instead
-  threshold: { on, off },    // trained models: override the operating point (only `on` given: off = 0.6 * on);
-                             // it must suit all three, since setModel() can switch to any
+  threshold: { on, off },    // trained models: absolute on/off probabilities for whichever model runs (only `on`
+                             // given: off = 0.6 * on); setModel() fails if it does not fit the target model
   clearAfterMs: 200,         // silence before the held chord clears
   stabilityFrames: 1,        // frames the pitch-class set must hold before a chord is named (fft default: 4)
   modelBaseUrl: undefined,   // a folder holding fast.bin, piano.bin, voice.bin if you host the weights yourself

@@ -52,7 +52,7 @@ function checkOptions(o) {
   const m = getModel(o.model ?? 'fast');
   if (o.threshold != null) {
     if (typeof o.threshold !== 'object') throw new PitchPleaseError('bad-threshold', 'threshold must be an object: { on, off }.');
-    for (const x of MODELS) resolveThreshold(x, o.threshold); // setModel() may switch to any of them
+    resolveThreshold(m, o.threshold); // setModel() checks the model it switches to
   }
   if (o.stabilityFrames != null && !(Number.isInteger(o.stabilityFrames) && o.stabilityFrames >= 1)) {
     throw new PitchPleaseError('bad-options', 'stabilityFrames must be a whole number >= 1.');
@@ -506,7 +506,10 @@ export function create(options = {}) {
   // Resolves the model running afterwards: id on success, the old model if the switch failed, null if none runs.
   async function setModel(id) {
     let m;
-    try { m = getModel(id); } catch (e) { fail(e); return runningModel(); }
+    try {
+      m = getModel(id);
+      resolveThreshold(m, options.threshold); // the threshold is absolute: it must fit the model switched to
+    } catch (e) { fail(e); return runningModel(); }
     if (m.id === model) {
       if (session && !session.running) await session.started.catch(() => {});
       return runningModel();

@@ -395,3 +395,16 @@ describe('readiness', () => {
     d2.stop();
   }, 30_000);
 });
+
+describe('threshold', () => {
+  test('a threshold that does not fit the target model fails setModel(); the old model keeps running', async () => {
+    const errors = [];
+    const d = P.create({ threshold: { off: 0.65 }, onError: (e) => errors.push(e) }); // fits fast (on 0.7), not piano (0.6)
+    expect(await d.start()).toBe(true);
+    expect(await d.setModel('piano')).toBe('fast');
+    expect(errors.map((e) => e.code)).toEqual(['bad-threshold']);
+    expect(env.state.nodes.length).toBe(1); // nothing was built for piano
+    expect(await d.setModel('voice')).toBe('voice'); // on 0.65 >= off 0.65
+    d.stop();
+  });
+});

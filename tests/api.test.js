@@ -102,10 +102,13 @@ describe('options are checked up front', () => {
     expect(thrown(() => P.create({ model: 'fft', fftSize: 1024 }))).toBe('ok'); // binCount defaults within range
   });
 
-  test('a threshold must suit every model, since setModel() can switch to any', () => {
-    expect(thrown(() => P.create({ threshold: { off: 0.65 } }))).toMatch(/^bad-threshold: .*for 'piano': on 0.6, off 0.65.*Give `on` as well/);
+  test('a threshold is checked against the selected model (setModel() checks the one it switches to)', async () => {
+    expect(thrown(() => P.create({ threshold: { off: 0.65 } }))).toBe('ok'); // fast: on 0.7
+    expect(thrown(() => P.create({ model: 'piano', threshold: { off: 0.65 } }))).toMatch(/^bad-threshold: .*for 'piano': on 0.6, off 0.65.*Give `on` as well/);
     expect(thrown(() => P.create({ threshold: { on: 0.8, off: 0.65 } }))).toBe('ok');
     expect(thrown(() => P.create({ threshold: 0.5 }))).toMatch(/^bad-threshold: threshold must be an object/);
+    expect((await P.analyze(CHORD.subarray(0, 4800), 48000, { threshold: { off: 0.65 } })).length).toBeGreaterThan(5);
+    expect(await P.analyze(CHORD.subarray(0, 4800), 48000, { model: 'piano', threshold: { off: 0.65 } }).catch((e) => e.code)).toBe('bad-threshold');
   });
 
   test('kernel: null means auto', async () => {
