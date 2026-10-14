@@ -1,6 +1,6 @@
 {
   "name": "@markusstrasser/pitchplease",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Polyphonic pitch and chord detection in the browser. Pick a trained model (runs in an AudioWorklet) or the tiny FFT picker. No dependencies.",
   "type": "module",
   "main": "./pitchplease.js",

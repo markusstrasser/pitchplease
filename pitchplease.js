@@ -19,7 +19,7 @@ import { createResampler } from './engine/resample.js';
 import { folderUrl } from './engine/load.js';
 
 export { NOTE_NAMES, midiToNote, pitchClassToColor, matchChord, createChordHold, PitchPleaseError };
-export const version = '3.0.0';
+export const version = '3.1.0';
 /** Model metadata for building pickers: id, label, useCase, sizeKB, relativeCost, latencyMs, pianoF1, ... */
 export const models = MODELS;
 

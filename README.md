@@ -22,7 +22,7 @@ Without a bundler, import it from a CDN (or from a copy of the package folder) i
 
 ```html
 <script type="module">
-  import { create } from 'https://cdn.jsdelivr.net/npm/@markusstrasser/pitchplease@3.0.0/pitchplease.js';
+  import { create } from 'https://cdn.jsdelivr.net/npm/@markusstrasser/pitchplease@3.1.0/pitchplease.js';
   const detector = create({ onChord: (chord) => (document.title = chord.full) });
   document.querySelector('button').onclick = () => detector.start();
 </script>
@@ -159,7 +159,9 @@ larger gap because its latency and animation-frame cadence differ. A new `start(
 **Chords** are `{ root: 'C', rootPc: 0, name: 'Maj7', abbrev: 'maj7', full: 'Cmaj7' }`, matched exactly against 22
 templates: triads (major, minor, dim, aug, sus4, sus2), sevenths (maj7, 7, m7, m(maj7), dim7, ø7, aug7), sixths (6,
 m6) and extensions (add9, madd9, 9, m9, maj9, 11, 13). A chord stays held until another chord matches, and clears
-after `clearAfterMs` with no notes.
+after `clearAfterMs` with no notes. Power chords (E5) and sevenths without a fifth are deliberately not named: on 120
+GuitarSet recordings, naming power chords roughly doubled the wrong names shown per minute (`fast`: 28 to 62), because
+a decaying chord or a single note's harmonics often leave just a root and fifth; fifthless sevenths added 13–18%.
 
 **`onUpdate`** keeps v2's payload: `spectrum, binMidi, fundMidis, fundCount, pitchClasses, stable, chord, maxEnergy,
 threshold, peakBins, peakEnergies, peakCount`, plus `notes`, `probs` and `model`. For trained models, `spectrum` holds
@@ -237,6 +239,18 @@ cross-origin CDN import. Each model file downloads only when that model is used.
   send them).
 - **Node**: `analyze()` works in Node ≥ 20.19 and Bun; `require('@markusstrasser/pitchplease')` works too.
 - **TypeScript**: `pitchplease.d.ts` ships with the package and needs no DOM types.
+
+## Changes in 3.1
+
+- `assetBaseUrl` serves the worklet, the WebAssembly kernels and the models from one folder of your own. Files from
+  different releases now fail with a clear error instead of misbehaving: the worklet reports its version, kernel
+  bytes are checked against their SHA-256, and each model file carries a weights `revision` (also in `models`).
+- An unplugged or revoked microphone stops the detector and reports `mic-ended`. An interrupted or suspended audio
+  context resumes by itself, or on the next click or key press. A context closed by someone else reports
+  `processor-error`.
+- Live `frame.time` keeps counting across `setModel()`; in 3.0 it restarted near 0 with each model. The old model
+  keeps running until the new one's first frame.
+- Trained weights and detected notes are unchanged from 3.0.
 
 ## Migrating from v2
 

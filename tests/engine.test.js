@@ -164,7 +164,7 @@ describe('model metadata', () => {
   });
   test('version, exports map and shipped files', () => {
     expect(P.version).toBe(pkg.version);
-    expect(pkg.version).toBe('3.0.0');
+    expect(pkg.version).toBe('3.1.0');
     expect(pkg.type).toBe('module');
     expect(pkg.exports['.'].default).toBe('./pitchplease.js');
     // only what consumers need: narrowing after 3.0.0 would be breaking
